@@ -1,6 +1,7 @@
 """Demo: photo collections and their floorplan -> floorplan-aligned 3D scene.
 
     python demo.py --images examples/S221/interior examples/S221/exterior --floorplan examples/S221/floorplan.jpg
+    python demo.py --images <view>/rgb_rawlight.png --floorplan <floorplan> --structured3d   # a view of Structured3D
 """
 import argparse
 import glob
@@ -11,27 +12,28 @@ import numpy as np
 from PIL import Image
 
 from scenealigner import viewer
-from scenealigner.inference import MODEL_REPO, align_to_floorplan, get_floorplan_aligned_scene, load_model
+from scenealigner.inference import MODEL_REPO, S3D_MODEL_REPO, align_to_floorplan, get_floorplan_aligned_scene, load_model
 from scenealigner.preprocess import load_and_resize_plan, load_models, reconstruct, split_into_chunks
 from scenealigner.visualization import draw_alignment, draw_scene_cameras, draw_solid_points
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--images", nargs="+", required=True, help="one directory per photo collection")
+    parser.add_argument("--images", nargs="+", required=True, help="one directory, or one image, per photo collection")
     parser.add_argument("--floorplan", required=True)
     parser.add_argument("--output", default="outputs/demo")
-    parser.add_argument("--checkpoint_dir", default=MODEL_REPO, help="LoRA layers")
+    parser.add_argument("--checkpoint_dir", default=None, help="LoRA layers")
     parser.add_argument("--dinov3_weights", default=None, help="Meta's DINOv3 ViT-B/16 weights")
-    parser.add_argument("--recon_checkpoint", default=None, help="local copy of the pi3 weights")
+    parser.add_argument("--recon_checkpoint", default=None, help="local copy of the pi3 weights (not used with --structured3d)")
+    parser.add_argument("--structured3d", action="store_true", help="single views of Structured3D: original pi3 weights, our weights for Structured3D")
     parser.add_argument("--max_points", type=int, default=2_000_000, help="displayed points per reconstruction")
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--render", action="store_true", help="saves first_frame.png instead of starting the viewer")
     parser.add_argument("--share", action="store_true", help="also serves the viewer at a public viser share URL (24 hours)")
     args = parser.parse_args()
 
-    recon_model, geocalib = load_models(args.recon_checkpoint)
-    model = load_model(args.checkpoint_dir, args.dinov3_weights)
+    recon_model, geocalib = load_models(args.recon_checkpoint, "pi3-original" if args.structured3d else "pi3")
+    model = load_model(args.checkpoint_dir or (S3D_MODEL_REPO if args.structured3d else MODEL_REPO), args.dinov3_weights)
     plan_img, _ = load_and_resize_plan(args.floorplan)
     os.makedirs(args.output, exist_ok=True)
     plan_img.save(os.path.join(args.output, "floorplan.png"))
@@ -42,9 +44,12 @@ def main():
         # Each collection is reconstructed and aligned independently (in chunks of at most 150 photos)
         random.seed(42)
         np.random.seed(42)
-        chunks = split_into_chunks(sorted(glob.glob(os.path.join(directory, "*"))))
+        is_image = os.path.isfile(directory)
+        chunks = split_into_chunks([directory] if is_image else sorted(glob.glob(os.path.join(directory, "*"))))
         for k, image_paths in enumerate(chunks):
             name = os.path.basename(os.path.normpath(directory)) + (f"_{k}" if len(chunks) > 1 else "")
+            name = os.path.splitext(name)[0] if is_image else name
+            name += f"_{len(scenes)}" if name in scenes else ""  # the views of Structured3D share one file name
             recon = reconstruct(image_paths, recon_model, geocalib)
             alignment = align_to_floorplan(recon, plan_img, model)
             scene = get_floorplan_aligned_scene(recon, alignment)

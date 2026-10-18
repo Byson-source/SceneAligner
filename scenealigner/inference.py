@@ -1,18 +1,21 @@
 """Floorplan alignment: density map (Sec. 3.2), cross-modal correspondences and 2D similarity transform M
 (Sec. 3.3), and the floorplan-aligned 3D scene."""
+import os
+
 import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
 from dinov3.hub.backbones import dinov3_vitb16
-from huggingface_hub import hf_hub_download
+from huggingface_hub import hf_hub_download, snapshot_download
 from peft import PeftModel
 from PIL import Image
 from safetensors.torch import load_file
 from torchvision import transforms as T
 
 MODEL_REPO = "jhcho99/SceneAligner"  # our LoRA layers
-# DINOv3 ViT-B/16 weights from timm, an ungated copy (https://github.com/facebookresearch/dinov3/issues/145)
+S3D_MODEL_REPO = "jhcho99/SceneAligner/structured3d"  # our LoRA layers for Structured3D
+# DINOv3 ViT-B/16 weights from timm (https://github.com/facebookresearch/dinov3/issues/145)
 DINOV3_TIMM_REPO = "timm/vit_base_patch16_dinov3.lvd1689m"
 DINOV3_TIMM_REVISION = "c6a5fb7d12bbd3cf3b0079253141c3332aaed7da"
 EVAL_IMG_RES = 512  # resolution of density maps and floorplans
@@ -37,20 +40,26 @@ def load_timm_weights(base_model):
 def load_model(checkpoint_dir=MODEL_REPO, dinov3_weights=None):
     """DINOv3 ViT-B/16 with our LoRA layers, or the pretrained DINOv3 if checkpoint_dir is "pre-trained".
 
+    checkpoint_dir: local directory, or model repository on the Hugging Face Hub, optionally with a subfolder.
     dinov3_weights: Meta's weight file (default: timm's copy).
     """
     base_model = dinov3_vitb16(pretrained=False)
     state_dict = load_timm_weights(base_model) if dinov3_weights is None else torch.load(dinov3_weights, map_location="cpu")
     base_model.load_state_dict(state_dict)
-    model = base_model if checkpoint_dir == "pre-trained" else PeftModel.from_pretrained(base_model, checkpoint_dir)
-    return model.eval().to("cuda")
+    if checkpoint_dir == "pre-trained":
+        return base_model.eval().to("cuda")
+    if not os.path.isdir(checkpoint_dir) and checkpoint_dir.count("/") > 1:  # <user>/<repository>/<subfolder>
+        parts = checkpoint_dir.split("/")
+        repo, subfolder = "/".join(parts[:2]), "/".join(parts[2:])
+        checkpoint_dir = os.path.join(snapshot_download(repo, allow_patterns=f"{subfolder}/*"), subfolder)
+    return PeftModel.from_pretrained(base_model, checkpoint_dir).eval().to("cuda")
 
 
 def reconstruct_projection_geometry(points_cam0, points_conf, est_gravity_cam, conf_threshold_percent=45.0,
                                     xz_slice_val=2.5, density_size=EVAL_IMG_RES, padding=0.1, eps=1e-8):
     """Rotates the points to the gravity-aligned ground frame, filters them and fits the top-down projection.
 
-    Returns the projection parameters and the filtered points (N, 3) in the ground frame.
+    Returns the projection parameters, the filtered points (N, 3) in the ground frame and their mask (S, H, W).
     """
     # Ground frame (Gram-Schmidt): +Y along gravity, +X close to the x-axis of camera 0
     y_target = est_gravity_cam / (np.linalg.norm(est_gravity_cam) + eps)
@@ -68,12 +77,13 @@ def reconstruct_projection_geometry(points_cam0, points_conf, est_gravity_cam, c
     conf = points_conf.reshape(-1)
 
     # Confidence, height (+Y is down: top 5% and bottom 20% removed) and x/z percentile filters
-    points = points[conf > np.percentile(conf, conf_threshold_percent)]
-    ceil_cutoff, floor_cutoff = np.percentile(points[:, 1], [5.0, 80.0])
-    points = points[(points[:, 1] >= ceil_cutoff) & (points[:, 1] <= floor_cutoff)]
-    x_min, x_max = np.percentile(points[:, 0], [xz_slice_val, 100 - xz_slice_val])
-    z_min, z_max = np.percentile(points[:, 2], [xz_slice_val, 100 - xz_slice_val])
-    points = points[(points[:, 0] >= x_min) & (points[:, 0] <= x_max) & (points[:, 2] >= z_min) & (points[:, 2] <= z_max)]
+    mask = conf > np.percentile(conf, conf_threshold_percent)
+    ceil_cutoff, floor_cutoff = np.percentile(points[mask, 1], [5.0, 80.0])
+    mask &= (points[:, 1] >= ceil_cutoff) & (points[:, 1] <= floor_cutoff)
+    x_min, x_max = np.percentile(points[mask, 0], [xz_slice_val, 100 - xz_slice_val])
+    z_min, z_max = np.percentile(points[mask, 2], [xz_slice_val, 100 - xz_slice_val])
+    mask &= (points[:, 0] >= x_min) & (points[:, 0] <= x_max) & (points[:, 2] >= z_min) & (points[:, 2] <= z_max)
+    points = points[mask]
 
     # Scale and offsets that center the points in the map, with a margin
     min_x, min_z = points[:, 0].min(), points[:, 2].min()
@@ -82,7 +92,7 @@ def reconstruct_projection_geometry(points_cam0, points_conf, est_gravity_cam, c
     proj_params = {"R_rect": R_rect, "min_x": min_x, "min_z": min_z, "scale": scale,
                    "cx": (density_size - width_m * scale) / 2, "cz": (density_size - height_m * scale) / 2,
                    "density_size": density_size}
-    return proj_params, points
+    return proj_params, points, mask.reshape(points_conf.shape)
 
 
 def get_density_coordinates(points, proj_params):
@@ -166,7 +176,7 @@ def estimate_correspondences(model, density_img, plan_img):
 
 def align_to_floorplan(recon, plan_img, model):
     """Density map of a reconstruction, its reliable correspondences and M (density map -> floorplan pixels)."""
-    proj_params, points = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"])
+    proj_params, points, _ = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"])
     density_img = render_density_map(points, proj_params)
     src_px, dst_px = estimate_correspondences(model, density_img, plan_img)
     M, _ = cv2.estimateAffinePartial2D(src_px, dst_px, method=cv2.RANSAC, ransacReprojThreshold=0.04 * EVAL_IMG_RES)

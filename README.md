@@ -81,10 +81,52 @@ End to end from the photos, with the public π³ weights of MegaDepth-X; the num
 python evaluate_c3.py --c3_root <C3>
 ```
 
+## Training
+
+The training data are density maps of π³ and VGGT reconstructions of the C3 train split, of photo collections and of single photos, with correspondences derived from the C3 annotations. VGGT is only needed for the second command:
+
+```bash
+pip install einops && pip install --no-deps git+https://github.com/facebookresearch/vggt.git@a288dd0f14786c93483e45524328726ab7b1b4ce
+```
+
+```bash
+python prepare_c3.py --c3_root <C3> --train_csv <cache>/train.csv --output <data>                 # π³, photo collections
+python prepare_c3.py --c3_root <C3> --train_csv <cache>/train.csv --output <data> --model vggt    # VGGT, photo collections
+python prepare_c3.py --c3_root <C3> --train_csv <cache>/train.csv --output <data> --single_view   # π³, single photos
+python train.py --data <data> --output <run>
+python evaluate_c3.py --c3_root <C3> --recon_cache <cache>/test/reconstructions --checkpoint_dir <run>
+```
+
+Each `prepare_c3.py` command goes through five confidence thresholds, which `--conf` can split over several runs.
+
+## Structured3D
+
+Single-view localization on [Structured3D](https://structured3d-dataset.org/) (Table 3) uses its perspective images (`full`) and annotations, extracted to `<S3D>/scene_*`. Structured3D is a synthetic indoor dataset, so its views are reconstructed with the original π³ weights rather than those fine-tuned on Internet photos by MegaDepth-X. The floorplans are drawn from `annotation_3d.json` at 1 cm per pixel: walls in black, rooms in white, doors and windows closed.
+
+```bash
+python evaluate_s3d.py --s3d_root <S3D>
+```
+
+The released weights were trained for 20 epochs instead of 10, as we observed that training longer leads to a higher accuracy than reported in Table 3:
+
+| Recall (%) | Pos@0.1m | Pos@0.5m | Pos@1.0m | Ang&Pos@(30,1m) |
+|---|---|---|---|---|
+| Table 3 | 3.5 | 37.5 | 53.8 | 51.6 |
+| Released weights | 4.7 | 44.3 | 59.7 | 58.0 |
+
+
+Training: every view of the train scenes gives two samples, a density map of its π³ reconstruction and one of its ground-truth depth map.
+
+```bash
+python prepare_s3d.py --s3d_root <S3D> --output <s3d_data>
+python train.py --data <s3d_data> --output <s3d_run> --epochs 20 --resolutions 512 --min_points 1000
+python evaluate_s3d.py --s3d_root <S3D> --checkpoint_dir <s3d_run>
+```
+
 ## Release
 - [x] Demo, inference and evaluation on C3, with the model checkpoint ([jhcho99/SceneAligner](https://huggingface.co/jhcho99/SceneAligner)), the dataset and the cached test data
-- [ ] Training on C3 and training data generation
-- [ ] Structured3D
+- [x] Training on C3 and training data generation
+- [x] Structured3D
 
 ## License
 The code is released under the [MIT License](LICENSE). The models and data it uses keep their own licenses, listed in [THIRD_PARTY.md](THIRD_PARTY.md); the π³ weights are for non-commercial use only.
