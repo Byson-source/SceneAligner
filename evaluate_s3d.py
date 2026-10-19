@@ -1,6 +1,6 @@
 """Evaluation on the Structured3D test scenes: single-view camera localization (Table 3).
 
-    python evaluate_s3d.py --s3d_root <Structured3D>
+    python evaluate_s3d.py --s3d_root data/Structured3D
 """
 import argparse
 import json
@@ -34,7 +34,7 @@ def compute_metrics(t_errs, r_errs):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--s3d_root", required=True, help="Structured3D dataset: the directory of the scene_* folders")
+    parser.add_argument("--s3d_root", default="data/Structured3D", help="Structured3D test scenes: the directory of the scene_* folders")
     parser.add_argument("--checkpoint_dir", default=S3D_MODEL_REPO, help="LoRA layers")
     parser.add_argument("--dinov3_weights", default=None, help="Meta's DINOv3 ViT-B/16 weights")
     parser.add_argument("--output", default="outputs/s3d_results.json")

@@ -101,10 +101,10 @@ Each `prepare_c3.py` command goes through five confidence thresholds, which `--c
 
 ## Structured3D
 
-Single-view localization on [Structured3D](https://structured3d-dataset.org/) (Table 3) uses its perspective images (`full`) and annotations, extracted to `<S3D>/scene_*`. Structured3D is a synthetic indoor dataset, so its views are reconstructed with the original π³ weights rather than those fine-tuned on Internet photos by MegaDepth-X. The floorplans are drawn from `annotation_3d.json` at 1 cm per pixel: walls in black, rooms in white, doors and windows closed.
+Single-view localization on [Structured3D](https://structured3d-dataset.org/) (Table 3) uses its perspective images (`full`) and annotations of the test scenes (`scene_03250` to `scene_03499`), extracted to `data/Structured3D/scene_*`. Structured3D is a synthetic indoor dataset, so its views are reconstructed with the original π³ weights rather than those fine-tuned on Internet photos by MegaDepth-X. The floorplans are drawn from `annotation_3d.json` at 1 cm per pixel: walls in black, rooms in white, doors and windows closed.
 
 ```bash
-python evaluate_s3d.py --s3d_root <S3D>
+python evaluate_s3d.py
 ```
 
 The released weights were trained for 20 epochs instead of 10, as we observed that training longer leads to a higher accuracy than reported in Table 3:
@@ -114,14 +114,6 @@ The released weights were trained for 20 epochs instead of 10, as we observed th
 | Table 3 | 3.5 | 37.5 | 53.8 | 51.6 |
 | Released weights | 4.7 | 44.3 | 59.7 | 58.0 |
 
-
-Training: every view of the train scenes gives two samples, a density map of its π³ reconstruction and one of its ground-truth depth map.
-
-```bash
-python prepare_s3d.py --s3d_root <S3D> --output <s3d_data>
-python train.py --data <s3d_data> --output <s3d_run> --epochs 20 --resolutions 512 --min_points 1000
-python evaluate_s3d.py --s3d_root <S3D> --checkpoint_dir <s3d_run>
-```
 
 ## Release
 - [x] Demo, inference and evaluation on C3, with the model checkpoint ([jhcho99/SceneAligner](https://huggingface.co/jhcho99/SceneAligner)), the dataset and the cached test data

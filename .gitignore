@@ -15,4 +15,4 @@ venv/
 *.safetensors
 *.npz
 *.npy
-*.tar.gz
+*.tar.gzdata/Structured3D/
