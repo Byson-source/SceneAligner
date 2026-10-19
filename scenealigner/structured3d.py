@@ -155,11 +155,14 @@ def world_to_plan(points, plan_params):
 def list_views(scene_dir):
     """Directories of the furnished perspective views of a scene, in order."""
     rendering_dir = os.path.join(scene_dir, "2D_rendering")
+    ic(rendering_dir)
     views = []
     for room_id in sorted(os.listdir(rendering_dir)):
         room_dir = os.path.join(rendering_dir, room_id, "perspective", "full")
+        ic(room_dir)
         if os.path.isdir(room_dir):
             views += [os.path.join(room_dir, position_id) for position_id in sorted(os.listdir(room_dir))]
+        ic(views)
     return [view for view in views if all(os.path.exists(os.path.join(view, name)) for name in ("camera_pose.txt", "depth.png", "rgb_rawlight.png"))]
 
 

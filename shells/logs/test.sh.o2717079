@@ -1,0 +1,4 @@
+Warning, cannot find cuda-compiled version of RoPE2D, using a slow pytorch version instead
+2535 views, 0 without a similarity transform
+        Pos@0.1m          Pos@0.5m          Pos@1.0m   Ang&Pos@(30,1m)
+            4.93             47.69             62.96             61.18

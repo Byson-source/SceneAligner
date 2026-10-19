@@ -7,6 +7,8 @@ The pi3 reconstructions of the views are cached in --recon_cache and reused by l
 import argparse
 import json
 import os
+from icecream import ic, install
+install()
 
 import numpy as np
 from tqdm import tqdm
@@ -30,6 +32,7 @@ def pose_errors(recon, alignment, plan_params, view_dir):
 
 def load_or_reconstruct(view_dir, cache_path, models):
     """pi3 reconstruction of a view, from the cache if there, else computed and cached. models: loaded on first use."""
+    ic(cache_path)
     if os.path.exists(cache_path):
         return dict(np.load(cache_path))
     if not models:
@@ -66,12 +69,17 @@ def main():
 
     t_errs, r_errs, failed = [], [], 0
     for scene in tqdm(s3d.TEST_SCENES):
+        ic()
         scene_id = f"scene_{scene:05d}"
         scene_dir = os.path.join(args.s3d_root, scene_id)
         plan_img, plan_params = s3d.load_floorplan(scene_dir)
+        ic(scene_dir)
+        ic(s3d.list_views(scene_dir))
         for view_dir in s3d.list_views(scene_dir):
+            ic()
             room_id, position_id = view_dir.split(os.sep)[-4], view_dir.split(os.sep)[-1]
             cache_path = os.path.join(args.recon_cache, scene_id, f"{room_id}_{position_id}.npz")
+            ic(cache_path)
             recon = load_or_reconstruct(view_dir, cache_path, recon_models)
             try:
                 alignment = align_to_floorplan(recon, plan_img, model)
@@ -82,7 +90,6 @@ def main():
             t_err, r_err = pose_errors(recon, alignment, plan_params, view_dir)
             t_errs.append(t_err)
             r_errs.append(r_err)
-
     metrics = compute_metrics(t_errs, r_errs)
     print(f"{len(t_errs)} views, {failed} without a similarity transform")
     print("  ".join(f"{k:>16}" for k in metrics))
