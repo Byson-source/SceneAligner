@@ -107,6 +107,8 @@ Single-view localization on [Structured3D](https://structured3d-dataset.org/) (T
 python evaluate_s3d.py
 ```
 
+The π³ reconstructions of the views are cached in `outputs/s3d_reconstructions` (`--recon_cache`): later runs skip π³ and GeoCalib.
+
 The released weights were trained for 20 epochs instead of 10, as we observed that training longer leads to a higher accuracy than reported in Table 3:
 
 | Recall (%) | Pos@0.1m | Pos@0.5m | Pos@1.0m | Ang&Pos@(30,1m) |

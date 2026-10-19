@@ -1,6 +1,8 @@
 """Evaluation on the Structured3D test scenes: single-view camera localization (Table 3).
 
     python evaluate_s3d.py --s3d_root data/Structured3D
+
+The pi3 reconstructions of the views are cached in --recon_cache and reused by later runs.
 """
 import argparse
 import json
@@ -14,6 +16,8 @@ from scenealigner.evaluation import compute_pose_error_analytic, get_camera_cent
 from scenealigner.inference import S3D_MODEL_REPO, align_to_floorplan, load_model, reconstruct_projection_geometry
 from scenealigner.preprocess import load_models, reconstruct
 
+CACHED_KEYS = ("points_cam0", "conf", "extrinsics", "est_gravity_cam")  # what the alignment and the errors use
+
 
 def pose_errors(recon, alignment, plan_params, view_dir):
     """Positional (m) and angular (degrees) errors of the camera of a view aligned to its floorplan."""
@@ -22,6 +26,20 @@ def pose_errors(recon, alignment, plan_params, view_dir):
     t_err, r_err = compute_pose_error_analytic(alignment["M"], recon["extrinsics"][0], alignment["proj_params"], center_px,
                                                s3d.world_to_plan(eye, plan_params), forward[:2] * (1, -1))
     return float(t_err * s3d.MM_PER_PIXEL / plan_params[1] / 1000), r_err
+
+
+def load_or_reconstruct(view_dir, cache_path, models):
+    """pi3 reconstruction of a view, from the cache if there, else computed and cached. models: loaded on first use."""
+    if os.path.exists(cache_path):
+        return dict(np.load(cache_path))
+    if not models:
+        models.extend(load_models(recon_model="pi3-original"))
+    recon = reconstruct([os.path.join(view_dir, "rgb_rawlight.png")], *models)
+    recon = {k: recon[k] for k in CACHED_KEYS}
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    np.savez(cache_path + ".tmp.npz", **recon)
+    os.replace(cache_path + ".tmp.npz", cache_path)  # no partial file if interrupted
+    return recon
 
 
 def compute_metrics(t_errs, r_errs):
@@ -37,19 +55,23 @@ def main():
     parser.add_argument("--s3d_root", default="data/Structured3D", help="Structured3D test scenes: the directory of the scene_* folders")
     parser.add_argument("--checkpoint_dir", default=S3D_MODEL_REPO, help="LoRA layers")
     parser.add_argument("--dinov3_weights", default=None, help="Meta's DINOv3 ViT-B/16 weights")
+    parser.add_argument("--recon_cache", default="outputs/s3d_reconstructions", help="cached pi3 reconstructions of the views")
     parser.add_argument("--output", default="outputs/s3d_results.json")
     args = parser.parse_args()
 
     np.random.seed(42)
-    recon_model, geocalib = load_models(recon_model="pi3-original")
+    recon_models = []  # pi3 and GeoCalib, loaded only if a view is not cached
     model = load_model(args.checkpoint_dir, args.dinov3_weights)
 
     t_errs, r_errs, failed = [], [], 0
     for scene in tqdm(s3d.TEST_SCENES):
-        scene_dir = os.path.join(args.s3d_root, f"scene_{scene:05d}")
+        scene_id = f"scene_{scene:05d}"
+        scene_dir = os.path.join(args.s3d_root, scene_id)
         plan_img, plan_params = s3d.load_floorplan(scene_dir)
         for view_dir in s3d.list_views(scene_dir):
-            recon = reconstruct([os.path.join(view_dir, "rgb_rawlight.png")], recon_model, geocalib)
+            room_id, position_id = view_dir.split(os.sep)[-4], view_dir.split(os.sep)[-1]
+            cache_path = os.path.join(args.recon_cache, scene_id, f"{room_id}_{position_id}.npz")
+            recon = load_or_reconstruct(view_dir, cache_path, recon_models)
             try:
                 alignment = align_to_floorplan(recon, plan_img, model)
             except ValueError:  # no similarity transform: the identity is used
