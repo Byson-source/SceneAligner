@@ -107,7 +107,7 @@ Single-view localization on [Structured3D](https://structured3d-dataset.org/) (T
 python evaluate_s3d.py
 ```
 
-The π³ reconstructions of the views are cached in `outputs/s3d_reconstructions` (`--recon_cache`): later runs skip π³ and GeoCalib.
+The floorplans and the π³ reconstructions of the views are cached in `outputs/s3d_reconstructions` (`--recon_cache`): later runs skip the floorplan drawing, π³ and GeoCalib.
 
 The released weights were trained for 20 epochs instead of 10, as we observed that training longer leads to a higher accuracy than reported in Table 3:
 

@@ -2,15 +2,15 @@
 
     python evaluate_s3d.py --s3d_root data/Structured3D
 
-The pi3 reconstructions of the views are cached in --recon_cache and reused by later runs.
+The floorplans of the scenes and the pi3 reconstructions of the views are cached in --recon_cache and reused by
+later runs.
 """
 import argparse
 import json
 import os
-from icecream import ic, install
-install()
 
 import numpy as np
+from PIL import Image
 from tqdm import tqdm
 
 from scenealigner import structured3d as s3d
@@ -30,9 +30,24 @@ def pose_errors(recon, alignment, plan_params, view_dir):
     return float(t_err * s3d.MM_PER_PIXEL / plan_params[1] / 1000), r_err
 
 
+def load_or_draw_floorplan(scene_dir, cache_dir):
+    """Floorplan of a scene and its world_to_plan parameters, from the cache if there, else drawn and cached."""
+    img_path, params_path = os.path.join(cache_dir, "floorplan.png"), os.path.join(cache_dir, "floorplan.json")
+    if os.path.exists(params_path):  # written after the image
+        with open(params_path) as f:
+            origin, scale, offsets = json.load(f)
+        return Image.open(img_path).convert("RGB"), (tuple(origin), scale, tuple(offsets))
+    plan_img, plan_params = s3d.load_floorplan(scene_dir)
+    os.makedirs(cache_dir, exist_ok=True)
+    plan_img.save(img_path)  # lossless
+    with open(params_path + ".tmp", "w") as f:
+        json.dump(plan_params, f)
+    os.replace(params_path + ".tmp", params_path)
+    return plan_img, plan_params
+
+
 def load_or_reconstruct(view_dir, cache_path, models):
     """pi3 reconstruction of a view, from the cache if there, else computed and cached. models: loaded on first use."""
-    ic(cache_path)
     if os.path.exists(cache_path):
         return dict(np.load(cache_path))
     if not models:
@@ -59,7 +74,7 @@ def main():
     parser.add_argument("--s3d_root", default="data/Structured3D", help="Structured3D test scenes: the directory of the scene_* folders")
     parser.add_argument("--checkpoint_dir", default=S3D_MODEL_REPO, help="LoRA layers")
     parser.add_argument("--dinov3_weights", default=None, help="Meta's DINOv3 ViT-B/16 weights")
-    parser.add_argument("--recon_cache", default="outputs/s3d_reconstructions", help="cached pi3 reconstructions of the views")
+    parser.add_argument("--recon_cache", default="outputs/s3d_reconstructions", help="cached floorplans and pi3 reconstructions")
     parser.add_argument("--output", default="outputs/s3d_results.json")
     args = parser.parse_args()
 
@@ -69,17 +84,12 @@ def main():
 
     t_errs, r_errs, failed = [], [], 0
     for scene in tqdm(s3d.TEST_SCENES):
-        ic()
         scene_id = f"scene_{scene:05d}"
         scene_dir = os.path.join(args.s3d_root, scene_id)
-        plan_img, plan_params = s3d.load_floorplan(scene_dir)
-        ic(scene_dir)
-        ic(s3d.list_views(scene_dir))
+        plan_img, plan_params = load_or_draw_floorplan(scene_dir, os.path.join(args.recon_cache, scene_id))
         for view_dir in s3d.list_views(scene_dir):
-            ic()
             room_id, position_id = view_dir.split(os.sep)[-4], view_dir.split(os.sep)[-1]
             cache_path = os.path.join(args.recon_cache, scene_id, f"{room_id}_{position_id}.npz")
-            ic(cache_path)
             recon = load_or_reconstruct(view_dir, cache_path, recon_models)
             try:
                 alignment = align_to_floorplan(recon, plan_img, model)
@@ -90,6 +100,7 @@ def main():
             t_err, r_err = pose_errors(recon, alignment, plan_params, view_dir)
             t_errs.append(t_err)
             r_errs.append(r_err)
+
     metrics = compute_metrics(t_errs, r_errs)
     print(f"{len(t_errs)} views, {failed} without a similarity transform")
     print("  ".join(f"{k:>16}" for k in metrics))
