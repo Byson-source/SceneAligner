@@ -33,6 +33,7 @@ def load_or_reconstruct(view_dir, cache_path, models):
     if os.path.exists(cache_path):
         return dict(np.load(cache_path))
     if not models:
+        tqdm.write(f"{cache_path} not cached: loading pi3 and GeoCalib to reconstruct the views")
         models.extend(load_models(recon_model="pi3-original"))
     recon = reconstruct([os.path.join(view_dir, "rgb_rawlight.png")], *models)
     recon = {k: recon[k] for k in CACHED_KEYS}
