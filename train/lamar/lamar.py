@@ -478,6 +478,21 @@ def relative_extrinsics(c2w: np.ndarray) -> np.ndarray:
     return np.linalg.inv(c2w[0]) @ c2w
 
 
+def pose_deviation(poses: np.ndarray, reference: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Rotation and translation differences between two sets of poses.
+    Args:
+        poses (np.ndarray): tensor with shape [S, 4, 4]
+        reference (np.ndarray): tensor with shape [S, 4, 4]
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: angles [deg] and translation distances [m], each with shape [S]
+    """
+    relative = np.einsum("sji,sjk->sik", reference[:, :3, :3], poses[:, :3, :3])  # R_ref^T R
+    cos = np.clip((np.trace(relative, axis1=1, axis2=2) - 1) / 2, -1.0, 1.0)
+    return np.degrees(np.arccos(cos)), np.linalg.norm(poses[:, :3, 3] - reference[:, :3, 3], axis=1)
+
+
 def gravity_cam0(c2w0: np.ndarray) -> np.ndarray:
     """
     Gravity (down) direction in the frame of camera 0, the est_gravity_cam of SceneAligner.

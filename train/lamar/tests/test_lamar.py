@@ -150,3 +150,13 @@ def test_load_session_with_one_sensor_per_frame(tmp_path):
     assert frames.K_depth[1, 0, 0] == 201 and np.isnan(frames.K_depth[2]).all()
     sub = frames.subset(np.array([2, 0]))
     assert sub.K[:, 0, 0].tolist() == [1502, 1500] and sub.depth_paths[0] is None
+
+
+def test_pose_deviation():
+    reference = np.tile(np.eye(4), (2, 1, 1))
+    poses = reference.copy()
+    angle = np.radians(3.0)
+    poses[1, :3, :3] = [[np.cos(angle), -np.sin(angle), 0], [np.sin(angle), np.cos(angle), 0], [0, 0, 1]]
+    poses[1, :3, 3] = [0.3, 0.4, 0.0]
+    deg, m = lamar.pose_deviation(poses, reference)
+    assert np.allclose(deg, [0.0, 3.0]) and np.allclose(m, [0.0, 0.5])

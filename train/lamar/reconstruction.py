@@ -10,7 +10,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from lamar import gravity_cam0, relative_extrinsics
+from lamar import gravity_cam0, pose_deviation, relative_extrinsics
 
 MAPANYTHING_MODEL = "facebook/map-anything"  # CC BY-NC 4.0; "facebook/map-anything-apache" for commercial use
 MAPANYTHING_REVISION = None  # the weights of the Hugging Face Hub at their current revision
@@ -61,6 +61,7 @@ def reconstruct(image_paths: list, K: np.ndarray, c2w: np.ndarray, model, long_s
         dict: the keys of scenealigner.preprocess.reconstruct and more:
             "points_cam0" float32 [S, H, W, 3] (finite; 0 where masked), "conf" float32 [S, H, W] (0 where masked),
             "mask" bool [S, H, W], "extrinsics" [S, 4, 4] (ground-truth camera-to-camera-0),
+            "pose_error_deg", "pose_error_m" [S] (deviation of the poses predicted by MapAnything from the given ones),
             "est_gravity_cam" [3] (down direction in camera 0), "preprocessed_images" uint8 [S, H, W, 3],
             "image_sizes" int [S, 2] ((W, H) of every frame), "intrinsics" float32 [S, 3, 3] (of the H x W grid)
     """
@@ -80,10 +81,13 @@ def reconstruct(image_paths: list, K: np.ndarray, c2w: np.ndarray, model, long_s
                               ignore_pose_scale_inputs=False, ignore_calibration_inputs=False,
                               **({"minibatch_size": minibatch_size} if minibatch_size is not None else {}))
 
+    # MapAnything predicts the poses again from the given ones: they deviate slightly. The points of each view (its
+    # camera frame, i.e. its predicted depth) are placed with the ground-truth pose, consistent with "extrinsics".
     points, conf, mask, images, intrinsics = [], [], [], [], []
-    for pred in predictions:
+    for i, pred in enumerate(predictions):
         view_mask = pred["mask"][0, ..., 0].bool().cpu().numpy()
-        view_points = pred["pts3d"][0].float().cpu().numpy()
+        view_points = pred["pts3d_cam"][0].float().cpu().numpy() @ extrinsics[i, :3, :3].T.astype(np.float32) \
+            + extrinsics[i, :3, 3].astype(np.float32)
         view_points[~view_mask] = 0.0  # finite everywhere: reconstruct_projection_geometry takes percentiles
         view_conf = pred["conf"][0].float().cpu().numpy()
         view_conf[~view_mask] = 0.0
@@ -93,8 +97,7 @@ def reconstruct(image_paths: list, K: np.ndarray, c2w: np.ndarray, model, long_s
         images.append(pred["img_no_norm"][0].float().clamp(0, 1).mul(255).round().to(torch.uint8).cpu().numpy())
         intrinsics.append(pred["intrinsics"][0].float().cpu().numpy())
     poses = np.stack([pred["camera_poses"][0].float().cpu().numpy() for pred in predictions])
-    if not np.allclose(poses, extrinsics, atol=1e-3):  # MapAnything passes the given poses through
-        raise ValueError("MapAnything returned poses that differ from the given ground-truth poses")
+    pose_error_deg, pose_error_m = pose_deviation(poses, extrinsics)
     H, W = points[0].shape[:2]
     return {
         "points_cam0": np.stack(points).astype(np.float32),
@@ -105,6 +108,8 @@ def reconstruct(image_paths: list, K: np.ndarray, c2w: np.ndarray, model, long_s
         "preprocessed_images": np.stack(images),
         "image_sizes": np.tile(np.array([[W, H]]), (len(image_paths), 1)),
         "intrinsics": np.stack(intrinsics).astype(np.float32),
+        "pose_error_deg": pose_error_deg,
+        "pose_error_m": pose_error_m,
     }
 
 

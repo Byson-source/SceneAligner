@@ -288,10 +288,13 @@ def main():
         windows = iter_train_windows(kept.timestamps, tuple(args.lengths), args.stride)
         if args.windows_per_session and len(windows) > args.windows_per_session:
             windows = [windows[i] for i in sorted(rng.choice(len(windows), args.windows_per_session, replace=False))]
-        for start, length in tqdm(windows, desc=session_name):
+        progress = tqdm(windows, desc=session_name)
+        for start, length in progress:
             frames = kept.subset(np.arange(start, start + length))
             name = f"{session_name}_s{start:05d}_L{length}"
             recon = window_recon(frames, model, args.recon_cache, name)
+            # deviation of the poses predicted by MapAnything from the ground truth (the points use the ground truth)
+            progress.set_postfix(pose_err_deg=f"{recon['pose_error_deg'].max():.2f}", pose_err_m=f"{recon['pose_error_m'].max():.3f}")
             H, W = recon["points_cam0"].shape[1:3]
             lidar = None
             if any(p is not None for p in frames.depth_paths):
