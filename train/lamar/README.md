@@ -21,7 +21,7 @@ Differences from the C3 pipeline:
 <LAMAR_ROOT>/
 ├── HGE/sessions/map/                # benchmark release (https://lamar.ethz.ch/lamar/): trajectories.txt, sensors.txt,
 │   └── raw_data/ios_<date>_<time>_<NNN>/images/<timestamp>.jpg
-├── ios_<date>_<time>/               # raw phone sessions (download_lamar.sh): depths.txt, sensors.txt, rigs.txt,
+├── ios_<date>_<time>/               # raw phone sessions (shells/lamar/download_lamar.sh): depths.txt, sensors.txt, rigs.txt,
 │   └── raw_data/depth/<timestamp>.png
 └── hge.png                          # the floorplan (3278 x 2334 px), not redistributable
 ```
@@ -30,10 +30,10 @@ Differences from the C3 pipeline:
   of the map session; their floorplan-aligned poses are in `HGE/sessions/map/trajectories.txt` (camera-to-world)
   and their photos in `HGE/sessions/map/raw_data/<session>/images/`.
 - The LiDAR depth maps (16-bit PNG, millimetres) are in the raw release of the phone session `ios_<date>_<time>`
-  (the name without `_<NNN>`), matched to the photos by timestamp. `download_lamar.sh` fetches the 15 raw sessions
+  (the name without `_<NNN>`), matched to the photos by timestamp. `shells/lamar/download_lamar.sh` fetches the 15 raw sessions
   of the split (about 15 GB) from `https://cvg-data.inf.ethz.ch/lamar/raw/HGE/sessions/`:
   ```bash
-  bash train/lamar/download_lamar.sh /groups/gai51740/RBT3/umemura/zfloc/lamar
+  qsub shells/lamar/download_lamar.sh   # from the repository root; LAMAR_ROOT defaults to /groups/gai51740/RBT3/umemura/zfloc/lamar
   ```
   The URL of the benchmark release is set in the script (`BENCH_URL`) but was not verified: place
   `HGE/sessions/map` by hand if its download fails. A raw session outside the split (e.g. `ios_2022-01-20_17.30.07`)
@@ -114,11 +114,20 @@ holds the median position and angular errors. Baselines: `--checkpoint_dir pre-t
 `--checkpoint_dir jhcho99/SceneAligner` (the LoRA layers trained on C3). `--sessions val --seq_length 20 --seeds 42`
 evaluates the val session (indoor frames) for model selection.
 
-`run.sh` chains the check, the data, the training and both evaluations:
+## ABCI jobs
+
+The jobs in `shells/` (PBS, conda environment `tartanimu`) are submitted from the repository root; every GPU
+job has a rt_HF and a rt_HG version, thin wrappers that pass `DATA` and `RTYPE` to the common script:
 
 ```bash
-LAMAR_ROOT=<LAMAR_ROOT> ZFLOC_NPZ=<z-floc>/assets/metadata/hge.npz bash train/lamar/run.sh <data> <run>
+qsub shells/lamar/download_lamar.sh                                        # raw sessions, HGE/sessions/map, hge.png
+qsub shells/lamar/prepare_hg.sh                                            # lamar.py --check, prepare_lamar.py -> data/lamar_hge
+qsub shells/train/lamar_hg.sh                                              # train.py -> outputs/lamar_lamar_hge_rt_HG, wandb
+qsub -v CHECKPOINT=outputs/lamar_lamar_hge_rt_HG shells/lamar/evaluate_hg.sh  # val, then test
 ```
+
+`LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
+`qsub -v`, e.g. `qsub -v DATA=data/lamar_hge,EPOCHS=4 shells/train/lamar_hf.sh`.
 
 ## Resolution
 

@@ -1,7 +1,16 @@
-#!/usr/bin/env bash
+#!/bin/bash
+#PBS -P gai51740
+#PBS -q R9920261300
+#PBS -l select=1
+#PBS -l walltime=08:00:00
+#PBS -v RTYPE=rt_HG
+#PBS -m abe
+#PBS -k oed
 # Downloads and extracts the raw LaMAR HGE phone sessions needed by train/lamar/split.yaml.
 #
-#   bash train/lamar/download_lamar.sh [LAMAR_ROOT] [--all] [--rm-zip]
+#   qsub shells/lamar/download_lamar.sh                                  # from the repository root
+#   qsub -v LAMAR_ROOT=<dir>,ARGS="--all --rm-zip" shells/lamar/download_lamar.sh
+#   bash shells/lamar/download_lamar.sh [LAMAR_ROOT] [--all] [--rm-zip]
 #
 # LAMAR_ROOT (argument or environment variable) defaults to /groups/gai51740/RBT3/umemura/zfloc/lamar. Each
 # raw session archive ios_<date>_<time>.zip holds one directory of the same name (sensors.txt, images.txt,
@@ -14,16 +23,17 @@
 # not redistributable and is copied from FLOORPLAN_SRC when that file exists.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="${REPO:-${PBS_O_WORKDIR:-$(cd "$(dirname "$0")/../.." && pwd)}}"
+SPLIT="${SPLIT:-$REPO/train/lamar/split.yaml}"
 LAMAR_ROOT="${LAMAR_ROOT:-/groups/gai51740/RBT3/umemura/zfloc/lamar}"
 RAW_URL="${RAW_URL:-https://cvg-data.inf.ethz.ch/lamar/raw/HGE/sessions}"
 METADATA_URL="${METADATA_URL:-https://cvg-data.inf.ethz.ch/lamar/raw/HGE/metadata_phone.json}"
 BENCH_URL="${BENCH_URL:-https://cvg-data.inf.ethz.ch/lamar/benchmark/HGE.zip}"
-FLOORPLAN_SRC="${FLOORPLAN_SRC:-$SCRIPT_DIR/../../../z-floc/assets/floorplan/hge/hge.png}"
+FLOORPLAN_SRC="${FLOORPLAN_SRC:-$REPO/../z-floc/assets/floorplan/hge/hge.png}"
 
 ALL=0
 RM_ZIP=0
-for arg in "$@"; do
+for arg in "$@" ${ARGS:-}; do
     case "$arg" in
         --all) ALL=1 ;;
         --rm-zip) RM_ZIP=1 ;;
@@ -36,7 +46,7 @@ mkdir -p "$LAMAR_ROOT"
 if [ "$ALL" -eq 1 ]; then
     sessions=$(wget -qO- "$RAW_URL/" | grep -o 'ios_[0-9._-]*\.zip' | sed 's/\.zip$//' | sort -u)
 else
-    sessions=$(grep -o 'ios_[0-9._-]*_[0-9]\{3\}' "$SCRIPT_DIR/split.yaml" | sed 's/_[0-9]\{3\}$//' | sort -u)
+    sessions=$(grep -o 'ios_[0-9._-]*_[0-9]\{3\}' "$SPLIT" | sed 's/_[0-9]\{3\}$//' | sort -u)
 fi
 echo "raw sessions:"
 echo "$sessions" | sed 's/^/  /'

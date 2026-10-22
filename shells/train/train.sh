@@ -1,0 +1,26 @@
+#!/bin/bash
+#PBS -P gai51740
+#PBS -q R9920261300
+#PBS -l select=1
+#PBS -l walltime=24:00:00
+#PBS -v RTYPE=rt_HG
+#PBS -m abe
+#PBS -k oed
+# Training of the LoRA layers on the LaMAR HGE data of prepare_lamar.py, logged to wandb.
+# Called by lamar_hf.sh / lamar_hg.sh with DATA and RTYPE; can be submitted alone: qsub -v DATA=<data> shells/train/train.sh
+
+source /etc/profile.d/modules.sh
+export PATH=${HOME}/miniconda3/bin:$PATH && source activate tartanimu
+export OMP_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 MKL_NUM_THREADS=1
+REPO="${REPO:-${PBS_O_WORKDIR:-$(pwd)}}"  # qsub from the repository root
+cd "$REPO"
+set -euo pipefail
+
+DATA="${DATA:-data/lamar_hge}"
+RTYPE="${RTYPE:-rt_HG}"
+RUN="${RUN:-outputs/lamar_$(basename "$DATA")_${RTYPE}}"
+EPOCHS="${EPOCHS:-2}"
+WANDB_PROJECT="${WANDB_PROJECT:-scenealigner-lamar}"
+
+python train.py --data "$DATA" --output "$RUN" --epochs "$EPOCHS" --resolutions 1024 1280 --min_points 1000 \
+    --wandb_project "$WANDB_PROJECT" --wandb_name "$(basename "$RUN")"
