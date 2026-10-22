@@ -29,6 +29,50 @@ from scenealigner.visualization import draw_rgb_plan_correspondences  # noqa: E4
 WINDOW_NAME = re.compile(r"(?P<session>.+)_s(?P<start>\d{5})_L(?P<length>\d+)$")  # prepare_lamar.main
 
 
+def filter_masks(recon: dict, R_rect: np.ndarray, conf_percent: float, xz_slice_val: float) -> tuple[dict, tuple]:
+    """
+    The successive filters of scenealigner.inference.reconstruct_projection_geometry, to tell which one drops points.
+    Args:
+        recon (dict): of reconstruction.reconstruct
+        R_rect (np.ndarray): camera 0 -> ground frame (+Y along gravity) with shape [3, 3]
+        conf_percent (float): confidence threshold (percentile)
+        xz_slice_val (float): x/z percentile filter
+
+    Returns:
+        tuple[dict, tuple]: cumulative masks {"conf", "height", "xz"} with shape [S, H, W], and the kept heights
+            (ceiling, floor cutoffs) [m] along gravity from camera 0 (negative: above it)
+    """
+    points = (recon["points_cam0"] @ R_rect.T).reshape(-1, 3)
+    conf = recon["conf"].reshape(-1)
+    masks = {"conf": conf > np.percentile(conf, conf_percent)}
+    cutoffs = np.percentile(points[masks["conf"], 1], [5.0, 80.0])
+    masks["height"] = masks["conf"] & (points[:, 1] >= cutoffs[0]) & (points[:, 1] <= cutoffs[1])
+    x_min, x_max = np.percentile(points[masks["height"], 0], [xz_slice_val, 100 - xz_slice_val])
+    z_min, z_max = np.percentile(points[masks["height"], 2], [xz_slice_val, 100 - xz_slice_val])
+    masks["xz"] = masks["height"] & (points[:, 0] >= x_min) & (points[:, 0] <= x_max) & (points[:, 2] >= z_min) & (points[:, 2] <= z_max)
+    return {k: v.reshape(recon["conf"].shape) for k, v in masks.items()}, tuple(cutoffs)
+
+
+def breakdown(tc: np.ndarray, s: int, masks: dict) -> np.ndarray:
+    """
+    Wall correspondences of frame s, then those left after each filter.
+    Args:
+        tc (np.ndarray): (u, v) pixels with shape [N, 2]
+        s (int): frame
+        masks (dict): of filter_masks
+
+    Returns:
+        np.ndarray: counts with shape [1 + len(masks)] (wall, conf, height, xz)
+    """
+    u, v = tc[:, 0].astype(int), tc[:, 1].astype(int)
+    return np.array([len(tc)] + [masks[k][s, v, u].sum() for k in masks])
+
+
+def fmt(counts: np.ndarray, masks: dict) -> str:
+    """Counts of breakdown as "wall 164 > conf 120 > height 17 > xz 17"."""
+    return " > ".join(f"{k} {n}" for k, n in zip(["wall", *masks], counts))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--map_dir", required=True, help="HGE/sessions/map")
@@ -38,7 +82,8 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--windows", nargs="+", default=None, help="window names (<session>_s<start>_L<length>); default: random")
     parser.add_argument("--num_windows", type=int, default=10, help="random windows of the cache without --windows")
-    parser.add_argument("--frames", type=int, nargs="+", default=[0, -1], help="frames of a window (indices, -1: last)")
+    parser.add_argument("--frames", type=int, nargs="+", default=None,
+                        help="frames of a window (indices, -1: last); default: the 2 with most points on the density map")
     parser.add_argument("--num_points", type=int, default=300, help="correspondences drawn per frame")
     parser.add_argument("--conf", type=float, default=45, help="confidence threshold of the density map (percentile)")
     parser.add_argument("--xz", type=float, default=2.5, help="x/z slice of the density map")
@@ -74,16 +119,25 @@ def main():
         proj_params, points, proj_mask = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"],
                                                                          args.conf, args.xz, density_size=DENSITY_SIZE)
         density_img = np.array(render_training_map(points, proj_params, 0.5).convert("RGB"))
-        for frame in args.frames:
-            s = frame % length
+        masks, (ceil_m, floor_m) = filter_masks(recon, proj_params["R_rect"], args.conf, args.xz)
+        assert (masks["xz"] == proj_mask).all()
+        views = [s for s in range(length) if corrs[s] is not None]
+        if not views:
+            print(f"{name}: too few correspondences")
+            continue
+        counts = {s: breakdown(corrs[s]["tensor_coords"], s, masks) for s in views}
+        print(f"{name}: {fmt(sum(counts.values()), masks)} (height kept: {-ceil_m:.1f} m above to {floor_m:.1f} m below camera 0)")
+        frames_drawn = [f % length for f in args.frames] if args.frames else sorted(views, key=lambda s: -counts[s][-1])[:2]
+        for s in frames_drawn:
             corr = corrs[s]
             if corr is None:
-                print(f"{name} frame {s}: too few correspondences")
+                print(f"  frame {s}: too few correspondences")
                 continue
             tc = corr["tensor_coords"]
+            print(f"  frame {s}: {fmt(counts[s], masks)}")
             tc = tc[proj_mask[s, tc[:, 1].astype(int), tc[:, 0].astype(int)]]  # points of the density map
             if len(tc) == 0:
-                print(f"{name} frame {s}: no correspondence on the density map")
+                print(f"  frame {s}: no correspondence on the density map")
                 continue
             tc = tc[rng.choice(len(tc), min(args.num_points, len(tc)), replace=False)]
             u, v = tc.astype(int).T
@@ -96,7 +150,7 @@ def main():
             image = draw_rgb_plan_correspondences(recon["preprocessed_images"][s], tc, plan_full, plan_px, camera_px,
                                                   camera_dir, density_img, density_px)
             Image.fromarray(image).save(os.path.join(args.output, f"{name}_f{s:03d}.png"))
-            print(f"{name} frame {s}: {len(corr['tensor_coords'])} correspondences, {len(tc)} drawn")
+            print(f"  frame {s}: {len(tc)} drawn")
 
 
 if __name__ == "__main__":
