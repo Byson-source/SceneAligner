@@ -126,6 +126,7 @@ def main():
     t_errs, r_errs, failed = [], [], 0
     for scene in tqdm(range(first, last + 1)):
         scene_id = f"scene_{scene:05d}"
+        ic(scene_id)
         scene_dir = os.path.join(args.s3d_root, scene_id)
         if not os.path.isdir(os.path.join(scene_dir, "2D_rendering")):
             tqdm.write(f"{scene_id}: not in {args.s3d_root}, skipped")
@@ -136,12 +137,15 @@ def main():
             room_id, position_id = view_dir.split(os.sep)[-4], view_dir.split(os.sep)[-1]
             cache_path = os.path.join(args.recon_cache, scene_id, f"{room_id}_{position_id}.npz")
             recon = load_or_reconstruct(view_dir, cache_path, recon_models)
+            ic()
             try:
                 alignment = align_to_floorplan(recon, plan_img, model)
             except ValueError:  # no similarity transform: the identity is used
                 proj_params, points, _ = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"])
                 alignment = {"proj_params": proj_params, "density_img": render_density_map(points, proj_params), "M": np.eye(2, 3)}
                 failed += 1
+            ic()    
+            
             t_err, r_err = pose_errors(recon, alignment, plan_params, view_dir)
             t_errs.append(t_err)
             r_errs.append(r_err)

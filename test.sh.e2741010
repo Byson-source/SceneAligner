@@ -1,0 +1,6 @@
+Fetching 2 files:   0%|          | 0/2 [00:00<?, ?it/s]Fetching 2 files: 100%|██████████| 2/2 [00:00<00:00, 760.94it/s]
+  0%|          | 0/21 [00:00<?, ?it/s] 29%|██▊       | 6/21 [00:00<00:00, 52.69it/s] 57%|█████▋    | 12/21 [00:00<00:00, 56.54it/s] 90%|█████████ | 19/21 [00:00<00:00, 58.19it/s]100%|██████████| 21/21 [00:00<00:00, 57.53it/s]
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/numpy/_core/fromnumeric.py:3860: RuntimeWarning: Mean of empty slice.
+  return _methods._mean(a, axis=axis, dtype=dtype,
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/numpy/_core/_methods.py:144: RuntimeWarning: invalid value encountered in scalar divide
+  ret = ret.dtype.type(ret / rcount)

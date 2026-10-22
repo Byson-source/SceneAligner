@@ -23,7 +23,7 @@
 # not redistributable and is copied from FLOORPLAN_SRC when that file exists.
 set -euo pipefail
 
-REPO="${REPO:-${PBS_O_WORKDIR:-$(cd "$(dirname "$0")/../.." && pwd)}}"
+REPO=${HOME}/oss/SceneAligner
 SPLIT="${SPLIT:-$REPO/train/lamar/split.yaml}"
 LAMAR_ROOT="${LAMAR_ROOT:-/groups/gai51740/RBT3/umemura/zfloc/lamar}"
 RAW_URL="${RAW_URL:-https://cvg-data.inf.ethz.ch/lamar/raw/HGE/sessions}"

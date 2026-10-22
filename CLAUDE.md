@@ -4,7 +4,7 @@
 1. Please reply in Japanese as concise as possible
 2. Always commit to branch called "develop"
 3. Be willing to create appropriate folder structure and helper functions to foster readability. Code as concise as possible
-4. always activate 'tartanimu' conda environment by doing `export PATH=${HOME}/miniconda3/bin:$PATH && source activate tartanimu`
+4. always activate 'tartanimu' conda environment by doing `export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner`
 5. for every shell script, please refer to abci doc and you need to write for example:
    ```bash
    #!/bin/bash
