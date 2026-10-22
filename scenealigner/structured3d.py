@@ -6,7 +6,6 @@ import io
 import json
 import os
 
-import cv2
 import matplotlib
 import numpy as np
 from PIL import Image, ImageOps
@@ -20,8 +19,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 MM_PER_PIXEL = 10.0  # of the drawn floorplan, before it is resized
 CANVAS = 80000  # mm: the drawing covers 40 m around the origin of a scene
-TRAIN_SCENES, TEST_SCENES = range(0, 3000), range(3250, 3500)
-OFF_CANVAS_SCENES = (2119, 2208, 2401)  # train scenes whose floorplans lie (partly) outside the drawing
+TEST_SCENES = range(3250, 3500)
 
 
 def convert_lines_to_vertices(lines):
@@ -170,29 +168,6 @@ def load_camera(view_dir):
     with open(os.path.join(view_dir, "camera_pose.txt")) as f:
         values = np.array(f.read().split(), dtype=np.float64)
     return values[0:3], values[3:6], values[6:9], values[9], values[10]
-
-
-def load_world_points(view_dir, size=518):
-    """3D point (mm, world frame) of every pixel of a view as loaded by pi3 (resized and padded to 518 x 518),
-    from its depth map and camera. NaN where there is no depth."""
-    eye, view, up, xfov, yfov = load_camera(view_dir)
-    depth = cv2.imread(os.path.join(view_dir, "depth.png"), cv2.IMREAD_UNCHANGED).astype(np.float64)
-    height, width = depth.shape
-    new_height = int(round(height * (size / width) / 14) * 14)
-    pad_top = (size - new_height) // 2
-    depth = cv2.resize(depth, (size, new_height), interpolation=cv2.INTER_NEAREST)
-    depth = cv2.copyMakeBorder(depth, pad_top, size - new_height - pad_top, 0, 0, cv2.BORDER_CONSTANT, value=0)
-
-    # Camera axes (right, down, forward) and the intrinsics of the resized, padded view
-    view, up = view / (np.linalg.norm(view) + 1e-10), up / (np.linalg.norm(up) + 1e-10)
-    right = np.cross(view, up)
-    R_world2cam = np.stack([right / (np.linalg.norm(right) + 1e-10), -up, view], axis=0)
-    fx, fy = (width / 2.0) / np.tan(xfov) * (size / width), (height / 2.0) / np.tan(yfov) * (new_height / height)
-    cx, cy = width / 2.0 * (size / width), height / 2.0 * (new_height / height) + pad_top
-    u, v = np.meshgrid(np.arange(size, dtype=np.float64), np.arange(size, dtype=np.float64))
-    points = np.stack([(u - cx) * depth / fx, (v - cy) * depth / fy, depth], axis=-1) @ R_world2cam + eye
-    points[depth <= 0] = np.nan
-    return points
 
 
 if __name__ == "__main__":

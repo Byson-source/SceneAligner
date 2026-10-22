@@ -16,3 +16,4 @@ venv/
 *.npz
 *.npy
 *.tar.gz
+data/Structured3D/

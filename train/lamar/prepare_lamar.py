@@ -1,15 +1,15 @@
 """Training data from LaMAR HGE: density maps of windows of consecutive frames and their correspondences with the
 floorplan. Every window gives samples of its MapAnything reconstruction (ground-truth intrinsics and relative
 poses as input, as prepare_c3.py varies the confidence threshold, the x/z slice and the gamma) and samples of its
-LiDAR depth maps unprojected with the ground-truth poses (as the depth samples of prepare_s3d.py).
+LiDAR depth maps unprojected with the ground-truth poses (as the ground-truth depth samples of the Structured3D
+training of the paper).
 
     python train/lamar/prepare_lamar.py --map_dir <HGE/sessions/map> --raw_dir <raw sessions> --floorplan hge.png --output <data>
 
 Correspondences: the pixels of the density map of a 3D point and the floorplan pixel of that point, placed in the
 world with the ground-truth pose of the first camera and the affine transform of the floorplan (lamar.py); only
 points on walls of the floorplan are kept. With --plan_source recon (default), the points are those of the
-reconstruction, gated by the LiDAR depth where it exists; with --plan_source lidar, the LiDAR points (as
-prepare_s3d.py). The CSV rows also hold the photo and the position of the last camera, for the visualizations of
+reconstruction, gated by the LiDAR depth where it exists; with --plan_source lidar, the LiDAR points. The CSV rows also hold the photo and the position of the last camera, for the visualizations of
 train.py.
 """
 import argparse

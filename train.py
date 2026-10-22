@@ -1,7 +1,6 @@
 """Training of the LoRA layers on pairs of density maps and floorplans.
 
-    python train.py --data <data> --output <run>                                                   # C3
-    python train.py --data <data> --output <run> --epochs 20 --resolutions 512 --min_points 1000   # Structured3D
+    python train.py --data <data> --output <run>                                                                       # C3
     python train.py --data <data> --output <run> --resolutions 1024 1280 --min_points 1000 --wandb_project <project>  # LaMAR
 
 With --wandb_project, the losses are logged to Weights & Biases, and every --vis_every steps an image of the first
@@ -103,7 +102,7 @@ def visualize(batch, pred, ransac_thr=0.04):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", required=True, help="training data (prepare_c3.py or prepare_s3d.py)")
+    parser.add_argument("--data", required=True, help="training data (prepare_c3.py or train/lamar/prepare_lamar.py)")
     parser.add_argument("--output", required=True, help="directory of the LoRA layers and the training log")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--resolutions", type=int, nargs="+", default=[512, 768, 1024, 1280], help="one per batch, at random")

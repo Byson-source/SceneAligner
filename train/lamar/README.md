@@ -77,7 +77,7 @@ across a gap of the kept frames) are reconstructed with MapAnything. Each window
 - `mapanything/`: density maps of the reconstruction for two confidence thresholds (`--conf 45 75`), three x/z
   slices and four gammas, with correspondences from the reconstructed points on walls. Where the LiDAR is valid,
   points farther than 10 % (or 0.3 m) from it are left out (`--no_lidar_gate` keeps them). `--plan_source lidar`
-  takes the LiDAR points instead, as `prepare_s3d.py` does with the ground-truth depth.
+  takes the LiDAR points instead, as the Structured3D training of the paper does with the ground-truth depth.
 - `lidar/`: density maps of the LiDAR points, seen from above in the gravity-aligned frame of the first camera.
 
 Samples with fewer than `--min_correspondences 200` points, or whose correspondences do not agree with a
