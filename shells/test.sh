@@ -24,7 +24,9 @@
 
     cd ${HOME}/oss/SceneAligner
 
-    python evaluate_s3d.py --s3d_root ${HOME}/oss/SceneAligner/data/Structured3D
+    SCENES="${SCENES:-3200-3220}"  # inclusive scene index range FIRST-LAST
+    python evaluate_s3d.py --s3d_root ${HOME}/oss/SceneAligner/data/Structured3D --scenes "$SCENES" \
+      --output "outputs/s3d_results_${SCENES}.json"
 
 
     exit 0

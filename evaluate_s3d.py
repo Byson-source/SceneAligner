@@ -1,8 +1,10 @@
 """Evaluation on the Structured3D test scenes: single-view camera localization (Table 3).
 
     python evaluate_s3d.py --s3d_root data/Structured3D
+    python evaluate_s3d.py --s3d_root data/Structured3D --scenes 3200-3220 --output outputs/s3d_results_3200-3220.json
 
-The floorplans of the scenes and the pi3 reconstructions of the views are cached in --recon_cache and reused by
+The test scenes are scene_03250 to scene_03499; --scenes FIRST-LAST evaluates another inclusive range of scenes
+instead (scenes missing from --s3d_root are skipped).  The floorplans of the scenes and the pi3 reconstructions of the views are cached in --recon_cache and reused by
 later runs.  Per view, --image_dir/<scene>/<room>_<position>.png shows the RGB image next to the floorplan with the
 aligned density map and the estimated (green) and ground-truth (blue) cameras, each a dot with a 1 m arrow.
 """
@@ -112,16 +114,22 @@ def main():
     parser.add_argument("--recon_cache", default="outputs/s3d_reconstructions", help="cached floorplans and pi3 reconstructions")
     parser.add_argument("--output", default="outputs/s3d_results.json")
     parser.add_argument("--image_dir", default="outputs/s3d_views", help="per-view images of the cameras on the floorplan")
+    parser.add_argument("--scenes", default=f"{s3d.TEST_SCENES[0]}-{s3d.TEST_SCENES[-1]}",
+                        help="inclusive scene index range FIRST-LAST, e.g. 3200-3220 (default: the test scenes)")
     args = parser.parse_args()
+    first, last = (int(v) for v in args.scenes.split("-"))
 
     np.random.seed(42)
     recon_models = []  # pi3 and GeoCalib, loaded only if a view is not cached
     model = load_model(args.checkpoint_dir, args.dinov3_weights)
 
     t_errs, r_errs, failed = [], [], 0
-    for scene in tqdm(s3d.TEST_SCENES):
+    for scene in tqdm(range(first, last + 1)):
         scene_id = f"scene_{scene:05d}"
         scene_dir = os.path.join(args.s3d_root, scene_id)
+        if not os.path.isdir(os.path.join(scene_dir, "2D_rendering")):
+            tqdm.write(f"{scene_id}: not in {args.s3d_root}, skipped")
+            continue
         plan_img, plan_params = load_or_draw_floorplan(scene_dir, os.path.join(args.recon_cache, scene_id))
         for view_dir in s3d.list_views(scene_dir):
             
