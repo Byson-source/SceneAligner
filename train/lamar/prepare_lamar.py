@@ -88,6 +88,33 @@ def lidar_gate(recon: dict, lidar_cam0: np.ndarray, rel_tol: float = 0.1, abs_to
     return ~has_lidar | (diff <= np.maximum(abs_tol, rel_tol * ranges))
 
 
+def window_world(frames: Session, recon: dict, plan_source: str, use_lidar_gate: bool) -> tuple:
+    """
+    World points of the pixels of a window, from which the correspondences are drawn, and its LiDAR points.
+    Args:
+        frames (Session): the frames of the window
+        recon (dict): of reconstruction.reconstruct
+        plan_source (str): "recon" (reconstructed points) or "lidar" (LiDAR points)
+        use_lidar_gate (bool): leaves out the reconstructed points that disagree with the LiDAR
+
+    Returns:
+        tuple: world (np.ndarray [S, H, W, 3], NaN where unused; None for "lidar" without depth) and lidar
+            (np.ndarray [S, H, W, 3] in the frame of camera 0, NaN where missing; None without depth)
+    """
+    H, W = recon["points_cam0"].shape[1:3]
+    lidar = None
+    if any(p is not None for p in frames.depth_paths):
+        lidar = lidar_points_cam0(frames.depth_paths, frames.K_depth, recon["intrinsics"], (H, W), recon["extrinsics"])
+    if plan_source == "lidar":
+        return (None if lidar is None else world_points(lidar, frames.c2w[0])), lidar
+    world = world_points(recon["points_cam0"], frames.c2w[0])
+    unused = ~recon["mask"]
+    if lidar is not None and use_lidar_gate:
+        unused |= ~lidar_gate(recon, lidar)
+    world[unused] = np.nan
+    return world, lidar
+
+
 def wall_correspondences(world: np.ndarray, plan_params: dict, max_points: int, rng: np.random.Generator) -> list:
     """
     Per view, the pixels whose 3D points lie on a wall of the floorplan and the floorplan pixels of these points.
@@ -295,22 +322,9 @@ def main():
             recon = window_recon(frames, model, args.recon_cache, name)
             # deviation of the poses predicted by MapAnything from the ground truth (the points use the ground truth)
             progress.set_postfix(pose_err_deg=f"{recon['pose_error_deg'].max():.2f}", pose_err_m=f"{recon['pose_error_m'].max():.3f}")
-            H, W = recon["points_cam0"].shape[1:3]
-            lidar = None
-            if any(p is not None for p in frames.depth_paths):
-                lidar = lidar_points_cam0(frames.depth_paths, frames.K_depth, recon["intrinsics"], (H, W), recon["extrinsics"])
-
-            # Correspondences: world points of the pixels, NaN where unused
-            if args.plan_source == "lidar":
-                if lidar is None:
-                    continue
-                world = world_points(lidar, frames.c2w[0])
-            else:
-                world = world_points(recon["points_cam0"], frames.c2w[0])
-                unused = ~recon["mask"]
-                if lidar is not None and not args.no_lidar_gate:
-                    unused |= ~lidar_gate(recon, lidar)
-                world[unused] = np.nan
+            world, lidar = window_world(frames, recon, args.plan_source, not args.no_lidar_gate)
+            if world is None:
+                continue
             corrs = wall_correspondences(world, plan_params, args.max_points, rng)
 
             common = {"scene_id": scene_id_of(frames, args.scene_id, args.cell_m), "floorplan": plan_path,

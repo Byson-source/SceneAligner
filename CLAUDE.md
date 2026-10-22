@@ -31,7 +31,7 @@
 - 学習は wandb (`--wandb_project`)。`--vis_every` step ごとに floorplan 上の対応点 (GT 緑 / 予測 橙)・現在位置 (GT 青 / 推定 赤) と現在フレーム RGB を hstack して保存・ログ。
 
 構成
-- `train/lamar/`: `lamar.py` (CAPTURE 読込, affine, 壁判定, フィルタ, 窓, LiDAR), `reconstruction.py` (MapAnything), `prepare_lamar.py`, `evaluate_lamar.py`, `split.yaml`, `tests/`
+- `train/lamar/`: `lamar.py` (CAPTURE 読込, affine, 壁判定, フィルタ, 窓, LiDAR), `reconstruction.py` (MapAnything), `prepare_lamar.py`, `evaluate_lamar.py`, `visualize_correspondences.py` (RGB と floorplan の対応点を 7 色で描画), `split.yaml`, `tests/`
 - `shells/lamar/`: `download_lamar.sh`, `prepare.sh` (+`_hf`/`_hg`), `evaluate.sh` (+`_hf`/`_hg`)。`shells/train/`: `train.sh`, `lamar_hf.sh`, `lamar_hg.sh`
 - 既存の変更: `train.py` (wandb, 可視化), `scenealigner/training.py` (任意列 `rgb`/`camera_plan`/`camera_density`), `scenealigner/visualization.py`, `scenealigner/inference.py` (解像度を floorplan から取得。512 では不変)
 

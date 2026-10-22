@@ -89,6 +89,16 @@ position of the last camera) are only used by the visualizations of `train.py`. 
 so `scene_id` is `hge` for all of them (only the points of a sample are its negatives in the feature matching
 loss); `--scene_id cell` names 20 m cells instead, so that windows of different cells are negatives of each other.
 
+To look at the correspondences, `visualize_correspondences.py` draws, for random windows of the cache (or
+`--windows <name>`), the pixels of a frame whose points lie on walls next to their points on hge.png (cropped
+around them, the camera in blue), in seven colours from the left (red) to the right (violet) of the photo. It reads
+`recon_cache` and needs no GPU:
+
+```bash
+python train/lamar/visualize_correspondences.py --map_dir <LAMAR_ROOT>/HGE/sessions/map --raw_dir <LAMAR_ROOT> \
+    --floorplan <LAMAR_ROOT>/hge.png --recon_cache <data>/recon_cache --output <data>/vis_correspondences
+```
+
 ## Training
 
 ```bash
