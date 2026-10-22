@@ -138,8 +138,9 @@ def sample_descriptors(features, grid_points):
 
 @torch.no_grad()
 def estimate_correspondences(model, density_img, plan_img):
-    """Reliable correspondences from the density map to the floorplan, in pixels (Sec. 3.3)."""
+    """Reliable correspondences from the density map to the floorplan, in pixels of each (square) image (Sec. 3.3)."""
     device = next(model.parameters()).device
+    density_res, plan_res = density_img.size[0], plan_img.size[0]
     feature_maps = []
     for img in (density_img, plan_img):
         tokens = model.forward_features(norm_transform(img).unsqueeze(0).to(device))["x_norm_patchtokens"]
@@ -169,17 +170,24 @@ def estimate_correspondences(model, density_img, plan_img):
     gy, gx = torch.meshgrid(torch.arange(grid_dim), torch.arange(grid_dim), indexing="ij")
     grid_coords = (torch.stack([gx, gy], dim=-1).float().to(device).reshape(-1, 2) + 0.5) / grid_dim  # [0, 1]
     dst_pts_norm = torch.matmul(prob, grid_coords).squeeze(0)  # (N, 2)
-    src_px = (((src_pts_norm.squeeze(0) + 1) / 2)[final_mask].cpu().numpy() * EVAL_IMG_RES).astype(np.float32)
-    dst_px = (dst_pts_norm[final_mask].cpu().numpy() * EVAL_IMG_RES).astype(np.float32)
+    src_px = (((src_pts_norm.squeeze(0) + 1) / 2)[final_mask].cpu().numpy() * density_res).astype(np.float32)
+    dst_px = (dst_pts_norm[final_mask].cpu().numpy() * plan_res).astype(np.float32)
     return src_px, dst_px
 
 
-def align_to_floorplan(recon, plan_img, model):
-    """Density map of a reconstruction, its reliable correspondences and M (density map -> floorplan pixels)."""
-    proj_params, points, _ = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"])
+def align_to_floorplan(recon, plan_img, model, density_size=None, ransac_thr=0.04):
+    """Density map of a reconstruction, its reliable correspondences and M (density map -> floorplan pixels).
+
+    density_size: resolution of the density map, by default that of the floorplan (512 for C3 and Structured3D).
+    ransac_thr: RANSAC reprojection threshold, as a fraction of the floorplan resolution.
+    """
+    if density_size is None:
+        density_size = plan_img.size[0]
+    proj_params, points, _ = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"],
+                                                             density_size=density_size)
     density_img = render_density_map(points, proj_params)
     src_px, dst_px = estimate_correspondences(model, density_img, plan_img)
-    M, _ = cv2.estimateAffinePartial2D(src_px, dst_px, method=cv2.RANSAC, ransacReprojThreshold=0.04 * EVAL_IMG_RES)
+    M, _ = cv2.estimateAffinePartial2D(src_px, dst_px, method=cv2.RANSAC, ransacReprojThreshold=ransac_thr * plan_img.size[0])
     if M is None:
         raise ValueError("RANSAC failed to estimate the similarity transform.")
     return {"proj_params": proj_params, "density_img": density_img, "src_px": src_px, "dst_px": dst_px, "M": M}

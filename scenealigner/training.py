@@ -25,12 +25,23 @@ def render_training_map(points, proj_params, gamma=0.5):
     return Image.fromarray(255 - (density_map / density_map.max() * 255.0).astype(np.uint8))
 
 
+def rotate_points(pts, k, w, h):
+    """Points (N, 2) of an image of size (w, h) after its rotation by k * 90 degrees (counter-clockwise)."""
+    x, y = pts[:, 0], pts[:, 1]
+    return np.stack([(x, y), (y, w - x), (w - x, h - y), (h - y, x)][k], axis=1)
+
+
 def random_rotate(img, pts, k):
     """Rotates an image by k * 90 degrees (counter-clockwise) together with its points."""
     w, h = img.size
-    x, y = pts[:, 0], pts[:, 1]
-    pts = np.stack([(x, y), (y, w - x), (w - x, h - y), (h - y, x)][k], axis=1)
-    return img.rotate(k * 90, expand=True), pts
+    return img.rotate(k * 90, expand=True), rotate_points(pts, k, w, h)
+
+
+def parse_point(value):
+    """A point stored as "x y" in a CSV column; NaN if the column is missing (C3 and Structured3D data)."""
+    if isinstance(value, str):
+        return np.array(value.split(), dtype=np.float32)
+    return np.full(2, np.nan, dtype=np.float32)
 
 
 class DensityFloorplanDataset(Dataset):
@@ -46,8 +57,11 @@ class DensityFloorplanDataset(Dataset):
     def __len__(self):
         return len(self.data)
 
-    def random_crop(self, img, pts, other_pts, crop_range=(0.7, 1.0)):
-        """Random crop of an image, kept only if at least min_points correspondences stay inside."""
+    def random_crop(self, img, pts, other_pts, extra, crop_range=(0.7, 1.0)):
+        """Random crop of an image, kept only if at least min_points correspondences stay inside.
+
+        extra (2,): one more point of the image (the camera position, for visualization), NaN if cropped out.
+        """
         w, h = img.size
         scale = random.uniform(*crop_range)
         crop_w, crop_h = int(w * scale), int(h * scale)
@@ -55,23 +69,35 @@ class DensityFloorplanDataset(Dataset):
         cropped = pts - np.float32([left, top])
         inside = (cropped[:, 0] >= 0) & (cropped[:, 0] < crop_w) & (cropped[:, 1] >= 0) & (cropped[:, 1] < crop_h)
         if inside.sum() < self.min_points:
-            return img, pts, other_pts
-        return img.crop((left, top, left + crop_w, top + crop_h)), cropped[inside], other_pts[inside]
+            return img, pts, other_pts, extra
+        extra = extra - np.float32([left, top])
+        if not (0 <= extra[0] < crop_w and 0 <= extra[1] < crop_h):
+            extra = np.full(2, np.nan, dtype=np.float32)
+        return img.crop((left, top, left + crop_w, top + crop_h)), cropped[inside], other_pts[inside], extra
 
     def __getitem__(self, idx):
         row = self.data.iloc[idx]
         density = Image.open(os.path.join(self.root, row.density)).convert("RGB")
         plan = Image.open(os.path.join(self.root, row.floorplan)).convert("RGB")
         pts_plan, pts_density = np.load(os.path.join(self.root, row.correspondences))  # (N, 2) pixels each
+        # Camera position of the last frame on both images and its photo (optional columns, for visualization)
+        camera_plan, camera_density = parse_point(row.get("camera_plan")), parse_point(row.get("camera_density"))
+        rgb_path = row.rgb if isinstance(row.get("rgb"), str) else ""
 
         # Augmentation: independent rotations and crops of the two images, colour jitter
-        density, pts_density = random_rotate(density, pts_density, np.random.randint(0, 4))
-        plan, pts_plan = random_rotate(plan, pts_plan, np.random.randint(0, 4))
-        plan, pts_plan, pts_density = self.random_crop(plan, pts_plan, pts_density)
-        density, pts_density, pts_plan = self.random_crop(density, pts_density, pts_plan)
+        k, (w, h) = np.random.randint(0, 4), density.size
+        density, pts_density = random_rotate(density, pts_density, k)
+        camera_density = rotate_points(camera_density[None], k, w, h)[0]
+        k, (w, h) = np.random.randint(0, 4), plan.size
+        plan, pts_plan = random_rotate(plan, pts_plan, k)
+        camera_plan = rotate_points(camera_plan[None], k, w, h)[0]
+        plan, pts_plan, pts_density, camera_plan = self.random_crop(plan, pts_plan, pts_density, camera_plan)
+        density, pts_density, pts_plan, camera_density = self.random_crop(density, pts_density, pts_plan, camera_density)
         plan, density = self.jitter_plan(plan), self.jitter_density(density)
 
         # Pixels -> [-1, 1] (grid_sample), without duplicates
+        camera_density = 2 * ((camera_density + 0.5) / np.float32(density.size)) - 1
+        camera_plan = 2 * ((camera_plan + 0.5) / np.float32(plan.size)) - 1
         pts_density = np.clip(2 * ((pts_density + 0.5) / np.float32(density.size)) - 1, -1, 1)
         pts_plan = np.clip(2 * ((pts_plan + 0.5) / np.float32(plan.size)) - 1, -1, 1)
         if self.image_size:  # training at a single resolution
@@ -90,17 +116,26 @@ class DensityFloorplanDataset(Dataset):
             pts_plan = torch.cat([torch.tensor(pts_plan), torch.rand(self.num_points - n, 2) * 2 - 1])
         valid = torch.arange(self.num_points) < n
         return {"density_img": norm_transform(density), "plan_img": norm_transform(plan), "density_pts": pts_density,
-                "plan_pts": pts_plan, "valid": valid, "scene_id": row.scene_id}
+                "plan_pts": pts_plan, "valid": valid, "scene_id": row.scene_id,
+                "camera_density": torch.tensor(camera_density), "camera_plan": torch.tensor(camera_plan), "rgb_path": rgb_path}
 
 
 def collate(batch, resolutions):
     """All images of a batch are resized to one resolution, drawn at random (mixed-resolution training)."""
     size = random.choice(resolutions)
-    out = {k: torch.stack([sample[k] for sample in batch]) for k in ("density_pts", "plan_pts", "valid")}
+    out = {k: torch.stack([sample[k] for sample in batch]) for k in ("density_pts", "plan_pts", "valid", "camera_density", "camera_plan")}
     for k in ("density_img", "plan_img"):  # the points are normalized: no rescaling
         out[k] = torch.cat([F.interpolate(sample[k][None], size=(size, size), mode="bicubic", antialias=True) for sample in batch])
     out["scene_id"] = [sample["scene_id"] for sample in batch]
+    out["rgb_path"] = [sample["rgb_path"] for sample in batch]
     return out
+
+
+def denormalize(img):
+    """Image tensor (3, H, W) of norm_transform -> uint8 array (H, W, 3)."""
+    mean, std = torch.tensor([0.485, 0.456, 0.406]), torch.tensor([0.229, 0.224, 0.225])
+    img = img.detach().float().cpu().permute(1, 2, 0) * std + mean
+    return (img.clamp(0, 1) * 255).round().to(torch.uint8).numpy()
 
 
 def feature_matching_loss(feat_a, feat_b, same_scene, valid, temperature=0.07):

@@ -12,6 +12,9 @@ The code in this repository is released under the MIT License (`LICENSE`). It in
 | [DINOv3](https://github.com/facebookresearch/dinov3) code and weights | Image encoder | [DINOv3 License](https://github.com/facebookresearch/dinov3/blob/main/LICENSE.md) |
 | [C3](https://c3po-correspondence.github.io/) | `data/c3` and `examples/S221` | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
 | [Structured3D](https://structured3d-dataset.org/) | Dataset of the single-view experiments (not included) | [Structured3D Terms of Use](https://structured3d-dataset.org/) |
+| [MapAnything](https://github.com/facebookresearch/map-anything) code and weights | 3D reconstruction of the LaMAR HGE windows (`train/lamar/`, optional) | [Apache-2.0](https://github.com/facebookresearch/map-anything/blob/main/LICENSE) (code), [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) (`facebook/map-anything` weights; `facebook/map-anything-apache` is Apache-2.0) |
+| [LaMAR](https://lamar.ethz.ch/) | Dataset of the HGE experiments (not included) | [LaMAR terms](https://lamar.ethz.ch/lamar/) (CC BY 4.0 documentation) |
+| [UnLoc](https://github.com/matthias-wueest/UnLoc) and [Z-FLoc](https://github.com/byson-source/z-floc) | `train/lamar/split.yaml`, the entrance correspondences, indoor intervals and index shift of `train/lamar/lamar.py` | MIT |
 | [Structured3D toolbox](https://github.com/bertjiazheng/Structured3D) and [SemRayLoc](https://github.com/TAU-VAILab/SemRayLoc) | The floorplan drawing in `scenealigner/structured3d.py` is adapted from them | [MIT](https://github.com/bertjiazheng/Structured3D/blob/master/LICENSE) (toolbox); SemRayLoc states no license |
 
 Our LoRA weights ([jhcho99/SceneAligner](https://huggingface.co/jhcho99/SceneAligner)) are derived from the DINOv3 weights and are released under the DINOv3 License. Those for Structured3D were trained on Structured3D and are subject to its Terms of Use as well.
