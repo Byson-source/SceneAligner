@@ -22,6 +22,8 @@ FLOORPLAN="${FLOORPLAN:-$LAMAR_ROOT/hge.png}"
 DATA="${DATA:-data/lamar_hge}"
 PLAN_SIZE="${PLAN_SIZE:-1024}"
 
+export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner
+
 python train/lamar/lamar.py --check --map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" --floorplan "$FLOORPLAN" --plan_size "$PLAN_SIZE"
 python train/lamar/prepare_lamar.py --map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" --floorplan "$FLOORPLAN" --output "$DATA" \
     --plan_size "$PLAN_SIZE" --recon_cache "$DATA/recon_cache"
