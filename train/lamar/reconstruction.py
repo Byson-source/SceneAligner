@@ -1,0 +1,130 @@
+"""3D reconstruction of a window of LaMAR frames with MapAnything, given the ground-truth intrinsics and relative
+camera poses, in the format of scenealigner.preprocess.reconstruct (so the density maps, correspondences and
+camera centres of SceneAligner are computed as for pi3).
+
+MapAnything is called as in Z-FLoc (tools/metadata_generation/geometry_utils.py, process_images): the inputs are
+metric, the poses are OpenCV camera-to-world relative to the first frame, and the gravity direction comes from
+the pose of the first frame instead of GeoCalib.
+"""
+import numpy as np
+import torch
+from PIL import Image
+
+from lamar import gravity_cam0, relative_extrinsics
+
+MAPANYTHING_MODEL = "facebook/map-anything"  # CC BY-NC 4.0; "facebook/map-anything-apache" for commercial use
+MAPANYTHING_REVISION = None  # the weights of the Hugging Face Hub at their current revision
+
+
+def load_mapanything(model_id: str = MAPANYTHING_MODEL, device: str = "cuda"):
+    """
+    MapAnything in evaluation mode.
+    Args:
+        model_id (str): Hugging Face model id or local directory
+        device (str): torch device
+
+    Returns:
+        mapanything.models.MapAnything: the model on device
+    """
+    from mapanything.models import MapAnything  # optional dependency (train/lamar/README.md)
+
+    return MapAnything.from_pretrained(model_id).eval().to(device)
+
+
+def load_image_uint8(path: str) -> torch.Tensor:
+    """
+    A photo as MapAnything expects it (no EXIF orientation applied: the LaMAR poses refer to the stored pixels).
+    Args:
+        path (str): JPEG or PNG
+
+    Returns:
+        torch.Tensor: uint8 tensor with shape [H, W, 3], RGB
+    """
+    return torch.from_numpy(np.array(Image.open(path).convert("RGB")))
+
+
+@torch.no_grad()
+def reconstruct(image_paths: list, K: np.ndarray, c2w: np.ndarray, model, long_side: int | None = None,
+                minibatch_size: int | None = None) -> dict:
+    """
+    Reconstructs the frames of a window in the frame of the first camera, with the ground-truth geometry as input.
+    Args:
+        image_paths (list): S photo paths, in chronological order
+        K (np.ndarray): intrinsics with shape [3, 3] of the photos (rescaled with the images by MapAnything)
+        c2w (np.ndarray): tensor with shape [S, 4, 4], camera-to-world poses [m] (OpenCV camera axes)
+        model: of load_mapanything
+        long_side (int | None): inference resolution of the long side [px]; None for MapAnything's default 518
+        minibatch_size (int | None): views per minibatch of the memory-efficient inference
+
+    Returns:
+        dict: the keys of scenealigner.preprocess.reconstruct and more:
+            "points_cam0" float32 [S, H, W, 3] (finite; 0 where masked), "conf" float32 [S, H, W] (0 where masked),
+            "mask" bool [S, H, W], "extrinsics" [S, 4, 4] (ground-truth camera-to-camera-0),
+            "est_gravity_cam" [3] (down direction in camera 0), "preprocessed_images" uint8 [S, H, W, 3],
+            "image_sizes" int [S, 2] ((W, H) of every frame), "intrinsics" float32 [S, 3, 3] (of the H x W grid)
+    """
+    from mapanything.utils.image import preprocess_inputs
+
+    extrinsics = relative_extrinsics(c2w)
+    views = [{"img": load_image_uint8(path), "intrinsics": torch.tensor(K, dtype=torch.float32),
+              "camera_poses": torch.tensor(extrinsics[i], dtype=torch.float32), "is_metric_scale": torch.tensor([True])}
+             for i, path in enumerate(image_paths)]
+    if long_side:
+        views = preprocess_inputs(views, resize_mode="longest_side", size=int(long_side))
+    else:
+        views = preprocess_inputs(views)
+    predictions = model.infer(views, memory_efficient_inference=True, use_amp=True, amp_dtype="bf16", apply_mask=True,
+                              mask_edges=True, apply_confidence_mask=False, confidence_percentile=10,
+                              ignore_pose_scale_inputs=False, ignore_calibration_inputs=False,
+                              **({"minibatch_size": minibatch_size} if minibatch_size is not None else {}))
+
+    points, conf, mask, images, intrinsics = [], [], [], [], []
+    for pred in predictions:
+        view_mask = pred["mask"][0, ..., 0].bool().cpu().numpy()
+        view_points = pred["pts3d"][0].float().cpu().numpy()
+        view_points[~view_mask] = 0.0  # finite everywhere: reconstruct_projection_geometry takes percentiles
+        view_conf = pred["conf"][0].float().cpu().numpy()
+        view_conf[~view_mask] = 0.0
+        points.append(view_points)
+        conf.append(view_conf)
+        mask.append(view_mask)
+        images.append(pred["img_no_norm"][0].float().clamp(0, 1).mul(255).round().to(torch.uint8).cpu().numpy())
+        intrinsics.append(pred["intrinsics"][0].float().cpu().numpy())
+    poses = np.stack([pred["camera_poses"][0].float().cpu().numpy() for pred in predictions])
+    if not np.allclose(poses, extrinsics, atol=1e-3):  # MapAnything passes the given poses through
+        raise ValueError("MapAnything returned poses that differ from the given ground-truth poses")
+    H, W = points[0].shape[:2]
+    return {
+        "points_cam0": np.stack(points).astype(np.float32),
+        "conf": np.stack(conf).astype(np.float32),
+        "mask": np.stack(mask),
+        "extrinsics": extrinsics.astype(np.float64),
+        "est_gravity_cam": gravity_cam0(c2w[0]),
+        "preprocessed_images": np.stack(images),
+        "image_sizes": np.tile(np.array([[W, H]]), (len(image_paths), 1)),
+        "intrinsics": np.stack(intrinsics).astype(np.float32),
+    }
+
+
+def save_recon(path: str, recon: dict) -> None:
+    """
+    Caches a reconstruction (float16 points to halve the size).
+    Args:
+        path (str): .npz file
+        recon (dict): of reconstruct
+    """
+    np.savez_compressed(path, **{k: (v.astype(np.float16) if k == "points_cam0" else v) for k, v in recon.items()})
+
+
+def load_recon(path: str) -> dict:
+    """
+    A cached reconstruction (save_recon).
+    Args:
+        path (str): .npz file
+
+    Returns:
+        dict: of reconstruct, with float32 points
+    """
+    recon = dict(np.load(path))
+    recon["points_cam0"] = recon["points_cam0"].astype(np.float32)
+    return recon

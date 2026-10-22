@@ -1,6 +1,13 @@
 """Training of the LoRA layers on pairs of density maps and floorplans.
 
-    python train.py --data <data> --output <run>
+    python train.py --data <data> --output <run>                                                                       # C3
+    python train.py --data <data> --output <run> --resolutions 1024 1280 --min_points 1000 --wandb_project <project>  # LaMAR
+
+With --wandb_project, the losses are logged to Weights & Biases, and every --vis_every steps an image of the first
+sample of the batch: the floorplan with the ground-truth and predicted correspondences and the position of the last
+camera (ground truth and estimated from the predicted correspondences), next to the photo of that camera (data
+with the camera_plan, camera_density and rgb columns, see train/lamar/prepare_lamar.py). The images are also saved
+to <run>/vis/.
 """
 import argparse
 import csv
@@ -12,12 +19,14 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from peft import LoraConfig, get_peft_model
+from PIL import Image
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from scenealigner.inference import SOFT_ARGMAX_TEMPERATURE, load_model, sample_descriptors
-from scenealigner.training import (DensityFloorplanDataset, collate, feature_matching_loss, geometry_loss,
+from scenealigner.training import (DensityFloorplanDataset, collate, denormalize, feature_matching_loss, geometry_loss,
                                    regression_loss, topology_loss)
+from scenealigner.visualization import draw_training_sample, estimate_camera_on_plan
 
 LAMBDA_REGR, LAMBDA_TOPO, LAMBDA_GEO = 50.0, 10.0, 10.0  # the weight of the feature matching loss is 1
 
@@ -32,7 +41,8 @@ def ramp(step, start, duration):
 
 
 def compute_loss(model, batch, step, total_steps):
-    """Loss of a batch at a training step, and its terms."""
+    """Loss of a batch at a training step, its terms and the weights of the curriculum, and the predicted
+    floorplan coordinates (B, N, 2) in [0, 1] of the density-map points."""
     density_img, plan_img = batch["density_img"].cuda(), batch["plan_img"].cuda()
     pts_density, pts_plan, valid = batch["density_pts"].cuda(), batch["plan_pts"].cuda(), batch["valid"].cuda()
     scene_ids = np.array(batch["scene_id"])
@@ -48,17 +58,19 @@ def compute_loss(model, batch, step, total_steps):
     losses = {"feat": feature_matching_loss(desc_density, sample_descriptors(map_plan, pts_plan), same_scene, valid)}
     loss = losses["feat"]
 
+    # Predicted floorplan coordinates in [0, 1]: soft-argmax over the patch centers
+    flat_plan = F.normalize(map_plan.flatten(2).permute(0, 2, 1), dim=-1)
+    sim_matrix = torch.matmul(F.normalize(desc_density, dim=-1), flat_plan.transpose(1, 2))
+    prob = F.softmax(sim_matrix / SOFT_ARGMAX_TEMPERATURE, dim=-1)
+    gy, gx = torch.meshgrid(torch.arange(grid_dim), torch.arange(grid_dim), indexing="ij")
+    grid_coords = (torch.stack([gx, gy], dim=-1).float().cuda().reshape(-1, 2) + 0.5) / grid_dim
+    pred = torch.matmul(prob, grid_coords)
+
     # Curriculum: the regression loss comes in after 10 % of the iterations, the structural ones after 20 %
     w_regr = ramp(step, total_steps // 10, total_steps // 10)
     w_struct = ramp(step, total_steps // 5, total_steps // 10)
+    losses["w_regr"], losses["w_struct"] = torch.tensor(w_regr), torch.tensor(w_struct)
     if w_regr > 0:
-        # Predicted floorplan coordinates in [0, 1]: soft-argmax over the patch centers
-        flat_plan = F.normalize(map_plan.flatten(2).permute(0, 2, 1), dim=-1)
-        sim_matrix = torch.matmul(F.normalize(desc_density, dim=-1), flat_plan.transpose(1, 2))
-        prob = F.softmax(sim_matrix / SOFT_ARGMAX_TEMPERATURE, dim=-1)
-        gy, gx = torch.meshgrid(torch.arange(grid_dim), torch.arange(grid_dim), indexing="ij")
-        grid_coords = (torch.stack([gx, gy], dim=-1).float().cuda().reshape(-1, 2) + 0.5) / grid_dim
-        pred = torch.matmul(prob, grid_coords)
         weights = prob.max(dim=-1).values.detach() * valid.float()  # confidence of the valid correspondences
         src = (pts_density + 1) / 2
         losses["regr"] = regression_loss(pred, (pts_plan + 1) / 2, weights)
@@ -68,19 +80,44 @@ def compute_loss(model, batch, step, total_steps):
             loss = loss + LAMBDA_GEO * w_struct * losses["geo"]
             losses["topo"] = topology_loss(src, pred, weights)
             loss = loss + LAMBDA_TOPO * w_struct * losses["topo"]
-    return loss, losses
+    return loss, losses, pred
+
+
+def visualize(batch, pred, ransac_thr=0.04):
+    """Image of the first sample of a batch (draw_training_sample), with the camera estimated from the predicted
+    correspondences by a similarity transform (RANSAC, as at inference)."""
+    plan = denormalize(batch["plan_img"][0])
+    pts_density, pts_plan, valid = batch["density_pts"][0].numpy(), batch["plan_pts"][0].numpy(), batch["valid"][0].numpy()
+    pred = pred[0].detach().float().cpu().numpy() * 2 - 1  # [0, 1] -> [-1, 1]
+    camera_density, camera_plan = batch["camera_density"][0].numpy(), batch["camera_plan"][0].numpy()
+    camera_pred = None
+    if np.isfinite(camera_density).all():  # pixels of the floorplan at the batch resolution
+        size = np.float32(plan.shape[1::-1])
+        camera_pred = estimate_camera_on_plan((pts_density[valid] + 1) / 2 * size, (pred[valid] + 1) / 2 * size,
+                                              (camera_density + 1) / 2 * size, ransac_thr * plan.shape[0])
+        if camera_pred is not None:
+            camera_pred = camera_pred / size * 2 - 1
+    return draw_training_sample(plan, pts_plan, pred, valid, camera_plan, camera_pred, batch["rgb_path"][0])
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", required=True, help="training data (prepare_c3.py)")
+    parser.add_argument("--data", required=True, help="training data (prepare_c3.py or train/lamar/prepare_lamar.py)")
     parser.add_argument("--output", required=True, help="directory of the LoRA layers and the training log")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--resolutions", type=int, nargs="+", default=[512, 768, 1024, 1280], help="one per batch, at random")
     parser.add_argument("--min_points", type=int, default=10000, help="correspondences that a random crop must keep")
     parser.add_argument("--dinov3_weights", default=None, help="Meta's DINOv3 ViT-B/16 weights")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--wandb_project", default=None, help="logs the losses and the visualizations to Weights & Biases")
+    parser.add_argument("--wandb_name", default=None, help="name of the wandb run")
+    parser.add_argument("--vis_every", type=int, default=500, help="steps between two visualizations (0: none)")
     args = parser.parse_args()
+    wandb = None
+    if args.wandb_project:
+        import wandb  # optional dependency
+
+        wandb.init(project=args.wandb_project, name=args.wandb_name, config=vars(args))
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -95,20 +132,27 @@ def main():
     model.train()
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-4)
 
-    os.makedirs(args.output, exist_ok=True)
+    os.makedirs(os.path.join(args.output, "vis"), exist_ok=True)
     log = csv.writer(open(os.path.join(args.output, "log.csv"), "w", buffering=1))
     log.writerow(["step", "loss", "feat", "regr", "geo", "topo"])
     step = 0
     for epoch in range(args.epochs):
         for batch in tqdm(loader, desc=f"epoch {epoch + 1}/{args.epochs}"):
             optimizer.zero_grad()
-            loss, losses = compute_loss(model, batch, step, total_steps)
+            loss, losses, pred = compute_loss(model, batch, step, total_steps)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             step += 1
             if step % 100 == 0:
                 log.writerow([step, loss.item()] + [losses[k].item() if k in losses else "" for k in ("feat", "regr", "geo", "topo")])
+                if wandb:
+                    wandb.log({"loss": loss.item(), "epoch": epoch, **{k: v.item() for k, v in losses.items()}}, step=step)
+            if args.vis_every and step % args.vis_every == 0:
+                image = visualize(batch, pred)
+                Image.fromarray(image).save(os.path.join(args.output, "vis", f"{step:06d}.png"))
+                if wandb:
+                    wandb.log({"sample": wandb.Image(image, caption=f"step {step}: {batch['scene_id'][0]}")}, step=step)
         model.save_pretrained(args.output)
 
 

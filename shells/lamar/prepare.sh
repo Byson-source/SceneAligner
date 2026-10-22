@@ -1,0 +1,27 @@
+#!/bin/bash
+#PBS -P gai51740
+#PBS -q R9920261300
+#PBS -l select=1
+#PBS -l walltime=24:00:00
+#PBS -v RTYPE=rt_HG
+#PBS -m abe
+#PBS -k oed
+# LaMAR HGE training data: data check, then MapAnything reconstructions and density maps of the train windows.
+# Called by prepare_hf.sh / prepare_hg.sh with DATA and RTYPE.
+
+source /etc/profile.d/modules.sh
+export PATH=${HOME}/miniconda3/bin:$PATH && source activate tartanimu
+export OMP_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 MKL_NUM_THREADS=1
+REPO="${REPO:-${PBS_O_WORKDIR:-$(pwd)}}"  # qsub from the repository root
+cd "$REPO"
+set -euo pipefail
+
+LAMAR_ROOT="${LAMAR_ROOT:-/groups/gai51740/RBT3/umemura/zfloc/lamar}"
+MAP_DIR="${MAP_DIR:-$LAMAR_ROOT/HGE/sessions/map}"
+FLOORPLAN="${FLOORPLAN:-$LAMAR_ROOT/hge.png}"
+DATA="${DATA:-data/lamar_hge}"
+PLAN_SIZE="${PLAN_SIZE:-1024}"
+
+python train/lamar/lamar.py --check --map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" --floorplan "$FLOORPLAN" --plan_size "$PLAN_SIZE"
+python train/lamar/prepare_lamar.py --map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" --floorplan "$FLOORPLAN" --output "$DATA" \
+    --plan_size "$PLAN_SIZE" --recon_cache "$DATA/recon_cache"

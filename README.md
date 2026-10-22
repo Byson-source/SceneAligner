@@ -119,6 +119,12 @@ The released weights were trained for 20 epochs instead of 10, as we observed th
 | Released weights | 4.7 | 44.3 | 59.7 | 58.0 |
 
 
+## LaMAR HGE
+
+Training and evaluation on the phone sequences of the HGE building of LaMAR, with MapAnything reconstructions of
+windows of consecutive frames (ground-truth intrinsics and relative poses as input), the split of UnLoc and the
+evaluation protocol of Z-FLoc: see [train/lamar/README.md](train/lamar/README.md).
+
 ## Release
 - [x] Demo, inference and evaluation on C3, with the model checkpoint ([jhcho99/SceneAligner](https://huggingface.co/jhcho99/SceneAligner)), the dataset and the cached test data
 - [x] Training on C3 and training data generation
