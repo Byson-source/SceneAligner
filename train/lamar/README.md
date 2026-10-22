@@ -61,6 +61,10 @@ pip install git+https://github.com/facebookresearch/map-anything.git@3d10cf7a301
 pip install wandb
 ```
 
+`import mapanything` also succeeds from a directory that contains a `mapanything/` folder (e.g. next to a clone,
+as a namespace package) without the package being installed: check with
+`cd / && python -c "import mapanything.models"`. The jobs of `shells/lamar/` do this check first.
+
 The weights `facebook/map-anything` (CC BY-NC 4.0) are downloaded from the Hugging Face Hub;
 `--mapanything_model facebook/map-anything-apache` selects the Apache-2.0 weights.
 

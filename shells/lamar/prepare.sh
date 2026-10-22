@@ -24,6 +24,9 @@ PLAN_SIZE="${PLAN_SIZE:-1024}"
 
 export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner
 
+python -c "import sys; print('python:', sys.executable, sys.version.split()[0])"
+(cd / && python -c "import mapanything.models") || { echo "MapAnything is not installed in $(which python): see train/lamar/README.md"; exit 1; }
+
 python train/lamar/lamar.py --check --map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" --floorplan "$FLOORPLAN" --plan_size "$PLAN_SIZE"
 python train/lamar/prepare_lamar.py --map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" --floorplan "$FLOORPLAN" --output "$DATA" \
     --plan_size "$PLAN_SIZE" --recon_cache "$DATA/recon_cache"

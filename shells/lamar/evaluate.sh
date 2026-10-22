@@ -30,6 +30,9 @@ if [ -n "${ZFLOC_NPZ:-}" ]; then
     ZFLOC_NPZ_ARG=(--zfloc_npz "$ZFLOC_NPZ")
 fi
 
+python -c "import sys; print('python:', sys.executable, sys.version.split()[0])"
+(cd / && python -c "import mapanything.models") || { echo "MapAnything is not installed in $(which python): see train/lamar/README.md"; exit 1; }
+
 python train/lamar/evaluate_lamar.py --map_dir "$MAP_DIR" --floorplan "$FLOORPLAN" --checkpoint_dir "$CHECKPOINT" \
     --plan_size "$PLAN_SIZE" --sessions val --seq_length 20 --seeds 42 --recon_cache "$DATA/recon_cache_eval" \
     --output "$OUT/val_results.json"
