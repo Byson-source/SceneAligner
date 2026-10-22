@@ -294,9 +294,8 @@ def main():
             recon = window_recon(frames, model, args.recon_cache, name)
             H, W = recon["points_cam0"].shape[1:3]
             lidar = None
-            if frames.K_depth is not None and any(p is not None for p in frames.depth_paths):
-                lidar = lidar_points_cam0(frames.depth_paths, frames.K_depth, recon["intrinsics"][0], (H, W),
-                                          recon["extrinsics"], frames.T_depth_to_cam)
+            if any(p is not None for p in frames.depth_paths):
+                lidar = lidar_points_cam0(frames.depth_paths, frames.K_depth, recon["intrinsics"], (H, W), recon["extrinsics"])
 
             # Correspondences: world points of the pixels, NaN where unused
             if args.plan_source == "lidar":

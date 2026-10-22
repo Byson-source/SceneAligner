@@ -124,3 +124,29 @@ def test_load_floorplan(tmp_path):
     assert img.size == (512, 512)
     assert params["wall_dist_px"][100, 1010] == pytest.approx(9.0)
     assert np.array(img.convert("L"))[:, int(1000 * params["scale"] + params["off"][0])].min() < 128  # the wall survived the resize
+
+
+def test_load_session_with_one_sensor_per_frame(tmp_path):
+    """Phone sessions with varying intrinsics have one camera and one depth sensor per frame (run_phone_to_capture)."""
+    session = "ios_2022-01-12_15.15.53_000"
+    map_dir, raw = tmp_path / "map", tmp_path / "ios_2022-01-12_15.15.53"
+    map_dir.mkdir()
+    (raw / "raw_data" / "depth").mkdir(parents=True)
+    timestamps = [100, 200, 300]
+    (map_dir / "trajectories.txt").write_text("# timestamp, device_id, qw, qx, qy, qz, tx, ty, tz\n" + "".join(
+        f"{ts}, {session}/cam_phone_{ts}, 1, 0, 0, 0, {i}, 0, 0\n" for i, ts in enumerate(timestamps)))
+    (map_dir / "sensors.txt").write_text("".join(
+        f"{session}/cam_phone_{ts}, phone camera, camera, PINHOLE, 1440, 1920, {1500 + i}, {1500 + i}, 720, 960\n"
+        for i, ts in enumerate(timestamps)))
+    (map_dir / "images.txt").write_text("".join(f"{ts}, {session}/cam_phone_{ts}, {session}/images/{ts}.jpg\n" for ts in timestamps))
+    (raw / "sensors.txt").write_text("".join(
+        f"depth_phone_{ts}, depth, depth, PINHOLE, 192, 256, {200 + i}, {200 + i}, 96, 128\n" for i, ts in enumerate(timestamps[:2])))
+    (raw / "depths.txt").write_text("".join(f"{ts}, depth_phone_{ts}, depth/{ts}.png\n" for ts in timestamps[:2]))
+
+    frames = lamar.load_session(map_dir, tmp_path, session)
+    assert frames.K[:, 0, 0].tolist() == [1500, 1501, 1502]
+    assert frames.image_paths[1] == str(map_dir / "raw_data" / session / "images" / "200.jpg")
+    assert frames.depth_paths[2] is None and frames.depth_paths[0].endswith("depth/100.png")
+    assert frames.K_depth[1, 0, 0] == 201 and np.isnan(frames.K_depth[2]).all()
+    sub = frames.subset(np.array([2, 0]))
+    assert sub.K[:, 0, 0].tolist() == [1502, 1500] and sub.depth_paths[0] is None

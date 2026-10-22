@@ -50,7 +50,8 @@ def reconstruct(image_paths: list, K: np.ndarray, c2w: np.ndarray, model, long_s
     Reconstructs the frames of a window in the frame of the first camera, with the ground-truth geometry as input.
     Args:
         image_paths (list): S photo paths, in chronological order
-        K (np.ndarray): intrinsics with shape [3, 3] of the photos (rescaled with the images by MapAnything)
+        K (np.ndarray): intrinsics with shape [S, 3, 3] (or [3, 3] shared) of the photos (rescaled with the images by
+            MapAnything)
         c2w (np.ndarray): tensor with shape [S, 4, 4], camera-to-world poses [m] (OpenCV camera axes)
         model: of load_mapanything
         long_side (int | None): inference resolution of the long side [px]; None for MapAnything's default 518
@@ -66,7 +67,8 @@ def reconstruct(image_paths: list, K: np.ndarray, c2w: np.ndarray, model, long_s
     from mapanything.utils.image import preprocess_inputs
 
     extrinsics = relative_extrinsics(c2w)
-    views = [{"img": load_image_uint8(path), "intrinsics": torch.tensor(K, dtype=torch.float32),
+    K = np.broadcast_to(K, (len(image_paths), 3, 3))
+    views = [{"img": load_image_uint8(path), "intrinsics": torch.tensor(K[i], dtype=torch.float32),
               "camera_poses": torch.tensor(extrinsics[i], dtype=torch.float32), "is_metric_scale": torch.tensor([True])}
              for i, path in enumerate(image_paths)]
     if long_side:

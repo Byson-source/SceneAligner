@@ -130,30 +130,17 @@ def load_sensors(path: str | Path) -> dict[str, dict]:
     return sensors
 
 
-def load_rigs(path: str | Path) -> dict[tuple[str, str], np.ndarray]:
-    """
-    Sensor-to-rig transforms of rigs.txt: rows rig_id, sensor_id, qw, qx, qy, qz, tx, ty, tz.
-    Args:
-        path (str | Path): rigs.txt (may not exist)
-
-    Returns:
-        dict[tuple[str, str], np.ndarray]: (rig_id, sensor_id) -> 4x4 sensor-to-rig transform
-    """
-    if not Path(path).exists():
-        return {}
-    return {(row[0], row[1]): pose_from_qt(*[float(v) for v in row[2:9]]) for row in read_csv(path)}
-
-
-def load_records(path: str | Path) -> dict[int, tuple[str, str]]:
+def load_records(path: str | Path, prefix: str = "") -> dict[int, tuple[str, str]]:
     """
     Records of images.txt or depths.txt: rows timestamp, sensor_id, path (relative to raw_data/).
     Args:
         path (str | Path): images.txt or depths.txt
+        prefix (str): only the sensors whose id starts with it (a sub-session of the map session)
 
     Returns:
         dict[int, tuple[str, str]]: timestamp [us] -> (sensor_id, relative path)
     """
-    return {int(row[0]): (row[1], row[2]) for row in read_csv(path)}
+    return {int(row[0]): (row[1], row[2]) for row in read_csv(path) if row[1].startswith(prefix)}
 
 
 def pose_from_qt(qw: float, qx: float, qy: float, qz: float, tx: float, ty: float, tz: float) -> np.ndarray:
@@ -176,7 +163,7 @@ def pose_from_qt(qw: float, qx: float, qy: float, qz: float, tx: float, ty: floa
     return pose
 
 
-def load_trajectory(path: str | Path, session: str) -> tuple[np.ndarray, np.ndarray]:
+def load_trajectory(path: str | Path, session: str) -> tuple[np.ndarray, list, np.ndarray]:
     """
     Camera-to-world poses of one session in trajectories.txt (rows timestamp, device_id, qw, qx, qy, qz, tx, ty, tz).
     Args:
@@ -184,21 +171,23 @@ def load_trajectory(path: str | Path, session: str) -> tuple[np.ndarray, np.ndar
         session (str): session name, the prefix of device_id
 
     Returns:
-        tuple[np.ndarray, np.ndarray]: timestamps [us] with shape [N] (strictly increasing) and camera-to-world
-            poses with shape [N, 4, 4] in the LaMAR world frame [m]
+        tuple[np.ndarray, list, np.ndarray]: timestamps [us] with shape [N] (strictly increasing), the N device ids
+            (the camera sensor of each frame: phones with varying intrinsics have one sensor per frame,
+            cam_phone_<timestamp>) and camera-to-world poses with shape [N, 4, 4] in the LaMAR world frame [m]
     """
-    timestamps, c2w = [], []
+    timestamps, device_ids, c2w = [], [], []
     for row in read_csv(path):
         if not row[1].startswith(session):
             continue
         timestamps.append(int(row[0]))
+        device_ids.append(row[1])
         c2w.append(pose_from_qt(*[float(v) for v in row[2:9]]))
     if not timestamps:
         raise ValueError(f"{path}: no poses of {session}")
     timestamps = np.array(timestamps)
     if not np.all(np.diff(timestamps) > 0):
         raise ValueError(f"{path}: the timestamps of {session} are not increasing")
-    return timestamps, np.stack(c2w)
+    return timestamps, device_ids, np.stack(c2w)
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -640,16 +629,16 @@ def unproject(depth_z: np.ndarray, K: np.ndarray) -> np.ndarray:
 
 
 def lidar_points_cam0(depth_paths: list, K_depth: np.ndarray, K_out: np.ndarray, hw_out: tuple[int, int],
-                      extrinsics: np.ndarray, T_depth_to_cam: np.ndarray | None = None) -> np.ndarray:
+                      extrinsics: np.ndarray) -> np.ndarray:
     """
-    LiDAR points of the frames of a window in the frame of camera 0, on the pixel grid of the reconstruction.
+    LiDAR points of the frames of a window in the frame of camera 0, on the pixel grid of the reconstruction. The
+    ARKit depth maps are registered to the photos (same pose, intrinsics scaled to the depth resolution).
     Args:
         depth_paths (list): S depth PNG paths, None for frames without depth
-        K_depth (np.ndarray): intrinsics with shape [3, 3] of the depth maps
-        K_out (np.ndarray): intrinsics with shape [3, 3] of the reconstruction grid
+        K_depth (np.ndarray): tensor with shape [S, 3, 3], intrinsics of the depth maps (NaN without depth)
+        K_out (np.ndarray): tensor with shape [S, 3, 3], intrinsics of the reconstruction grid
         hw_out (tuple[int, int]): (H, W) of the reconstruction grid
         extrinsics (np.ndarray): tensor with shape [S, 4, 4], camera-to-camera-0
-        T_depth_to_cam (np.ndarray | None): depth-sensor-to-camera transform with shape [4, 4] (rigs.txt), if any
 
     Returns:
         np.ndarray: float32 tensor with shape [S, H, W, 3], NaN where there is no depth
@@ -658,9 +647,8 @@ def lidar_points_cam0(depth_paths: list, K_depth: np.ndarray, K_out: np.ndarray,
     for i, path in enumerate(depth_paths):
         if path is None:
             continue
-        T = extrinsics[i] if T_depth_to_cam is None else extrinsics[i] @ T_depth_to_cam
-        local = unproject(sample_depth_on_grid(load_depth(path), K_depth, K_out, hw_out), K_out)
-        points[i] = local @ T[:3, :3].T + T[:3, 3]
+        local = unproject(sample_depth_on_grid(load_depth(path), K_depth[i], K_out[i], hw_out), K_out[i])
+        points[i] = local @ extrinsics[i, :3, :3].T + extrinsics[i, :3, 3]
     return points
 
 
@@ -676,9 +664,8 @@ class Session:
     image_paths: list  # N paths
     depth_paths: list  # N paths or None
     c2w: np.ndarray  # [N, 4, 4] camera-to-world [m]
-    K: np.ndarray  # [3, 3] of the photos
-    K_depth: np.ndarray | None  # [3, 3] of the depth maps
-    T_depth_to_cam: np.ndarray | None  # [4, 4] from rigs.txt, None if identity or unknown
+    K: np.ndarray  # [N, 3, 3] of the photos (one camera sensor per frame)
+    K_depth: np.ndarray  # [N, 3, 3] of the depth maps, NaN for frames without depth
 
     def __len__(self) -> int:
         return len(self.timestamps)
@@ -686,22 +673,7 @@ class Session:
     def subset(self, indices: np.ndarray) -> "Session":
         """Frames at the given indices, in that order."""
         return Session(self.name, self.timestamps[indices], [self.image_paths[i] for i in indices],
-                       [self.depth_paths[i] for i in indices], self.c2w[indices], self.K, self.K_depth, self.T_depth_to_cam)
-
-
-def camera_intrinsics(sensors: dict, session: str) -> np.ndarray:
-    """
-    Intrinsics of the photo camera of a session: the camera sensor whose id starts with the session name (the
-    sensors.txt of the map session lists the sensors of all its sub-sessions as <session>/<sensor>).
-    Args:
-        sensors (dict): of load_sensors
-        session (str): session name
-
-    Returns:
-        np.ndarray: intrinsics with shape [3, 3]; HGE_INTRINSICS when sensors.txt lists no camera of the session
-    """
-    cameras = [s for sensor_id, s in sensors.items() if s["type"] == "camera" and sensor_id.startswith(session)]
-    return cameras[0]["K"] if cameras else HGE_INTRINSICS
+                       [self.depth_paths[i] for i in indices], self.c2w[indices], self.K[indices], self.K_depth[indices])
 
 
 def load_session(map_dir: str | Path, raw_dir: str | Path | None, session: str) -> Session:
@@ -718,28 +690,23 @@ def load_session(map_dir: str | Path, raw_dir: str | Path | None, session: str) 
         Session: frames in trajectory order
     """
     map_dir = Path(map_dir)
-    timestamps, c2w = load_trajectory(map_dir / "trajectories.txt", session)
-    image_dir = map_dir / "raw_data" / session / "images"
-    image_paths = [str(image_dir / f"{ts}.jpg") for ts in timestamps]
+    timestamps, device_ids, c2w = load_trajectory(map_dir / "trajectories.txt", session)
     sensors = load_sensors(map_dir / "sensors.txt") if (map_dir / "sensors.txt").exists() else {}
-    K = camera_intrinsics(sensors, session)
+    K = np.stack([sensors[d]["K"] if d in sensors else HGE_INTRINSICS for d in device_ids])
+    images = load_records(map_dir / "images.txt", session) if (map_dir / "images.txt").exists() else {}
+    image_paths = [str(map_dir / "raw_data" / images[ts][1]) if ts in images else
+                   str(map_dir / "raw_data" / session / "images" / f"{ts}.jpg") for ts in timestamps]
 
-    depth_paths, K_depth, T_depth_to_cam = [None] * len(timestamps), None, None
+    depth_paths, K_depth = [None] * len(timestamps), np.full((len(timestamps), 3, 3), np.nan)
     raw_session = Path(raw_dir) / raw_session_name(session) if raw_dir is not None else None
     if raw_session is not None and (raw_session / "depths.txt").exists():
-        records = load_records(raw_session / "depths.txt")
-        depth_paths = [str(raw_session / "raw_data" / records[ts][1]) if ts in records else None for ts in timestamps]
+        records = load_records(raw_session / "depths.txt")  # timestamp -> (depth_phone[_<timestamp>], depth/<ts>.png)
         raw_sensors = load_sensors(raw_session / "sensors.txt")
-        depth_ids = {sensor_id for ts in timestamps if ts in records for sensor_id in [records[ts][0]]}
-        if len(depth_ids) > 1:
-            raise ValueError(f"{raw_session}: several depth sensors {sorted(depth_ids)}")
-        if depth_ids:
-            depth_id = depth_ids.pop()
-            K_depth = raw_sensors[depth_id]["K"]
-            for (rig_id, sensor_id), T in load_rigs(raw_session / "rigs.txt").items():
-                if sensor_id == depth_id and not np.allclose(T, np.eye(4)):
-                    T_depth_to_cam = T
-    return Session(session, timestamps, image_paths, depth_paths, c2w, K, K_depth, T_depth_to_cam)
+        for i, ts in enumerate(timestamps):
+            if ts in records:
+                depth_paths[i] = str(raw_session / "raw_data" / records[ts][1])
+                K_depth[i] = raw_sensors[records[ts][0]]["K"]
+    return Session(session, timestamps, image_paths, depth_paths, c2w, K, K_depth)
 
 
 def train_frames(session: Session, plan_params: dict) -> np.ndarray:
@@ -797,11 +764,16 @@ def check(args: argparse.Namespace) -> None:
                 kept = train_frames(session, plan_params)
                 detail = f"indoor and in bounds: {len(kept)}, train windows: {len(iter_train_windows(session.timestamps[kept]))}"
             raw_state = "no raw session" if raw is None or not raw.is_dir() else f"depth for {with_depth}/{len(session)} frames"
-            print(f"{split} {name}: {len(session)} frames, {detail}, {raw_state}, "
-                  f"plane normal {up['plane_normal_deg']:.1f} deg, camera up {up['camera_up_deg']:.1f} deg from +z, "
-                  f"K = {session.K[[0, 1, 0, 1], [0, 1, 2, 2]].round(1)}{'' if any(k.startswith(name) for k in sensors) else ' (default)'}")
-            if session.K_depth is not None:
-                print(f"    depth K = {session.K_depth[[0, 1, 0, 1], [0, 1, 2, 2]].round(2)}, rig transform: {session.T_depth_to_cam is not None}")
+            images_found = sum(os.path.exists(p) for p in session.image_paths)
+            print(f"{split} {name}: {len(session)} frames ({images_found} images found), {detail}, {raw_state}, "
+                  f"plane normal {up['plane_normal_deg']:.1f} deg, camera up {up['camera_up_deg']:.1f} deg from +z")
+            fx = session.K[:, 0, 0]
+            print(f"    image K[0] = {session.K[0][[0, 1, 0, 1], [0, 1, 2, 2]].round(1)}, fx in [{fx.min():.1f}, {fx.max():.1f}]")
+            if with_depth:
+                i = next(i for i, p in enumerate(session.depth_paths) if p is not None)
+                depth_shape = load_depth(session.depth_paths[i]).shape
+                ratio = session.K_depth[i][[0, 1, 0, 1], [0, 1, 2, 2]] / session.K[i][[0, 1, 0, 1], [0, 1, 2, 2]]
+                print(f"    depth {depth_shape[1]}x{depth_shape[0]}, K_depth / K of frame {i} = {ratio.round(4)} (fx, fy, cx, cy)")
 
 
 if __name__ == "__main__":

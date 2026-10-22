@@ -21,7 +21,7 @@ Differences from the C3 pipeline:
 <LAMAR_ROOT>/
 ├── HGE/sessions/map/                # benchmark release (https://lamar.ethz.ch/lamar/): trajectories.txt, sensors.txt,
 │   └── raw_data/ios_<date>_<time>_<NNN>/images/<timestamp>.jpg
-├── ios_<date>_<time>/               # raw phone sessions (shells/lamar/download_lamar.sh): depths.txt, sensors.txt, rigs.txt,
+├── ios_<date>_<time>/               # raw phone sessions (shells/lamar/download_lamar.sh): depths.txt, sensors.txt,
 │   └── raw_data/depth/<timestamp>.png
 └── hge.png                          # the floorplan (3278 x 2334 px), not redistributable
 ```

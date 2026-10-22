@@ -39,7 +39,7 @@
 - 実装済み。クラウド環境では py_compile・`bash -n`・`pytest train/lamar/tests` のみ検証。GPU / LaMAR データ / MapAnything での実行は未確認。
 
 未確認事項
-- raw セッションの depth sensor id と `rigs.txt` の変換、depth と画像の timestamp 一致率。
+- intrinsics はフレームごと (`cam_phone_<ts>` / `depth_phone_<ts>`)。depth は画像に registered (rig なし)。depth と画像の timestamp 一致率、K_depth / K の比 (`--check` に表示) は未確認。
 - test `ios_2022-01-18_17.10.39_000` は index shift で 516 フレーム、Z-FLoc は 483 (`--zfloc_npz` で照合)。
 - ABCI doc はクラウドから取得できず、PBS ヘッダは develop の `shells/test.sh` を雛形にした。
 - benchmark 版 `HGE.zip` は `BENCH_URL` で取得できた (job 2741583)。`hge.png` は `FLOORPLAN_SRC` に無く未コピー。
