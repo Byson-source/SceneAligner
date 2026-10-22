@@ -15,6 +15,7 @@
 
     export PATH=${HOME}/miniconda3/bin:$PATH
     source activate scenealigner
+    export PATH="${CONDA_PREFIX}/bin:$PATH"  # activate is a no-op when the caller already activated the env: keep it before base
 
 
 

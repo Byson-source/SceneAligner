@@ -11,6 +11,7 @@
 
 source /etc/profile.d/modules.sh
 export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner
+export PATH="${CONDA_PREFIX}/bin:$PATH"  # activate is a no-op when the caller already activated the env: keep it before base
 export OMP_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 MKL_NUM_THREADS=1
 REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v REPO=<dir>
 cd "$REPO"
@@ -22,7 +23,6 @@ FLOORPLAN="${FLOORPLAN:-$LAMAR_ROOT/hge.png}"
 DATA="${DATA:-data/lamar_hge}"
 PLAN_SIZE="${PLAN_SIZE:-1024}"
 
-export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner
 
 python -c "import sys; print('python:', sys.executable, sys.version.split()[0])"
 (cd / && python -c "import mapanything.models") || { echo "MapAnything is not installed in $(which python): see train/lamar/README.md"; exit 1; }
