@@ -3,19 +3,22 @@
     python evaluate_s3d.py --s3d_root data/Structured3D
 
 The floorplans of the scenes and the pi3 reconstructions of the views are cached in --recon_cache and reused by
-later runs.
+later runs.  Per view, --image_dir/<scene>/<room>_<position>.png shows the RGB image next to the floorplan with the
+aligned density map and the estimated (green) and ground-truth (blue) cameras, each a dot with a 1 m arrow.
 """
 import argparse
 import json
 import os
 
+import cv2
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
 from scenealigner import structured3d as s3d
 from scenealigner.evaluation import compute_pose_error_analytic, get_camera_center_on_density_px
-from scenealigner.inference import S3D_MODEL_REPO, align_to_floorplan, load_model, reconstruct_projection_geometry
+from scenealigner.inference import (S3D_MODEL_REPO, align_to_floorplan, load_model, reconstruct_projection_geometry,
+                                    render_density_map)
 from scenealigner.preprocess import load_models, reconstruct
 
 CACHED_KEYS = ("points_cam0", "conf", "extrinsics", "est_gravity_cam")  # what the alignment and the errors use
@@ -28,6 +31,36 @@ def pose_errors(recon, alignment, plan_params, view_dir):
     t_err, r_err = compute_pose_error_analytic(alignment["M"], recon["extrinsics"][0], alignment["proj_params"], center_px,
                                                s3d.world_to_plan(eye, plan_params), forward[:2] * (1, -1))
     return float(t_err * s3d.MM_PER_PIXEL / plan_params[1] / 1000), r_err
+
+
+def cameras_on_plan(recon, alignment, plan_params, view_dir):
+    """Estimated and ground-truth camera of a view on the floorplan: (position (2,), viewing direction (2,)) each, in
+    pixels, as compute_pose_error_analytic places them."""
+    proj_params, M = alignment["proj_params"], alignment["M"]
+    center_px = get_camera_center_on_density_px(recon["extrinsics"], proj_params)[0]
+    forward_ground = proj_params["R_rect"] @ (recon["extrinsics"][0, :3, :3] @ np.array([0.0, 0.0, 1.0]))
+    pred = (M @ np.array([*center_px, 1.0]), M[:2, :2] @ np.array([forward_ground[0], -forward_ground[2]]))
+    eye, forward = s3d.load_camera(view_dir)[:2]
+    return pred, (s3d.world_to_plan(eye, plan_params), forward[:2] * (1, -1))
+
+
+def draw_result(view_dir, alignment, plan_img, plan_params, cameras, out_path):
+    """RGB image next to the floorplan with the density map warped by M and the cameras: dot + 1 m arrow, estimate
+    green, ground truth blue."""
+    plan = np.array(plan_img)
+    density = np.array(alignment["density_img"])
+    canvas = cv2.addWeighted(plan, 0.6, cv2.warpAffine(density, alignment["M"], plan.shape[1::-1]), 0.4, 0)
+    arrow_px = 1000.0 / s3d.MM_PER_PIXEL * plan_params[1]  # 1 m on the resized floorplan
+    for (center, forward), color in zip(cameras, ((0, 255, 0), (0, 0, 255))):
+        start = tuple(np.round(center).astype(int))
+        if np.linalg.norm(forward) > 1e-6:  # looking straight up or down otherwise
+            end = tuple(np.round(center + forward / np.linalg.norm(forward) * arrow_px).astype(int))
+            cv2.arrowedLine(canvas, start, end, color, 2, tipLength=0.3, line_type=cv2.LINE_AA)
+        cv2.circle(canvas, start, 4, color, -1, lineType=cv2.LINE_AA)
+    rgb = Image.open(os.path.join(view_dir, "rgb_rawlight.png")).convert("RGB")
+    rgb = rgb.resize((max(1, round(rgb.width * canvas.shape[0] / rgb.height)), canvas.shape[0]))
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    Image.fromarray(np.hstack([np.array(rgb), canvas])).save(out_path)
 
 
 def load_or_draw_floorplan(scene_dir, cache_dir):
@@ -76,6 +109,7 @@ def main():
     parser.add_argument("--dinov3_weights", default=None, help="Meta's DINOv3 ViT-B/16 weights")
     parser.add_argument("--recon_cache", default="outputs/s3d_reconstructions", help="cached floorplans and pi3 reconstructions")
     parser.add_argument("--output", default="outputs/s3d_results.json")
+    parser.add_argument("--image_dir", default="outputs/s3d_views", help="per-view images of the cameras on the floorplan")
     args = parser.parse_args()
 
     np.random.seed(42)
@@ -94,12 +128,14 @@ def main():
             try:
                 alignment = align_to_floorplan(recon, plan_img, model)
             except ValueError:  # no similarity transform: the identity is used
-                proj_params = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"])[0]
-                alignment = {"proj_params": proj_params, "M": np.eye(2, 3)}
+                proj_params, points, _ = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"])
+                alignment = {"proj_params": proj_params, "density_img": render_density_map(points, proj_params), "M": np.eye(2, 3)}
                 failed += 1
             t_err, r_err = pose_errors(recon, alignment, plan_params, view_dir)
             t_errs.append(t_err)
             r_errs.append(r_err)
+            draw_result(view_dir, alignment, plan_img, plan_params, cameras_on_plan(recon, alignment, plan_params, view_dir),
+                        os.path.join(args.image_dir, scene_id, f"{room_id}_{position_id}.png"))
 
     metrics = compute_metrics(t_errs, r_errs)
     print(f"{len(t_errs)} views, {failed} without a similarity transform")

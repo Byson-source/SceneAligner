@@ -108,6 +108,7 @@ python evaluate_s3d.py
 ```
 
 The floorplans and the π³ reconstructions of the views are cached in `outputs/s3d_reconstructions` (`--recon_cache`): later runs skip the floorplan drawing, π³ and GeoCalib.
+Per view, `outputs/s3d_views/<scene>/<room>_<position>.png` (`--image_dir`) shows the RGB image next to the floorplan with the aligned density map and the estimated (green) and ground-truth (blue) cameras, each a dot with a 1 m viewing-direction arrow.
 
 The released weights were trained for 20 epochs instead of 10, as we observed that training longer leads to a higher accuracy than reported in Table 3:
 
