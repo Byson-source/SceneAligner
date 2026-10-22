@@ -105,9 +105,10 @@ Single-view localization on [Structured3D](https://structured3d-dataset.org/) (T
 
 ```bash
 python evaluate_s3d.py
+python evaluate_s3d.py --scenes 3200-3220 --output outputs/s3d_results_3200-3220.json   # other scenes
 ```
 
-The floorplans and the π³ reconstructions of the views are cached in `outputs/s3d_reconstructions` (`--recon_cache`): later runs skip the floorplan drawing, π³ and GeoCalib.
+`--scenes FIRST-LAST` evaluates an inclusive range of scenes instead of the test scenes; scenes missing from `data/Structured3D` are skipped. The floorplans and the π³ reconstructions of the views are cached in `outputs/s3d_reconstructions` (`--recon_cache`): later runs skip the floorplan drawing, π³ and GeoCalib.
 Per view, `outputs/s3d_views/<scene>/<room>_<position>.png` (`--image_dir`) shows the RGB image next to the floorplan with the aligned density map and the estimated (green) and ground-truth (blue) cameras, each a dot with a 1 m viewing-direction arrow.
 
 The released weights were trained for 20 epochs instead of 10, as we observed that training longer leads to a higher accuracy than reported in Table 3:
