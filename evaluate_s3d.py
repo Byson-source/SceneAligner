@@ -14,6 +14,8 @@ import cv2
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
+from icecream import ic, install
+install()
 
 from scenealigner import structured3d as s3d
 from scenealigner.evaluation import compute_pose_error_analytic, get_camera_center_on_density_px
@@ -122,7 +124,7 @@ def main():
         scene_dir = os.path.join(args.s3d_root, scene_id)
         plan_img, plan_params = load_or_draw_floorplan(scene_dir, os.path.join(args.recon_cache, scene_id))
         for view_dir in s3d.list_views(scene_dir):
-            ic()
+            
             room_id, position_id = view_dir.split(os.sep)[-4], view_dir.split(os.sep)[-1]
             cache_path = os.path.join(args.recon_cache, scene_id, f"{room_id}_{position_id}.npz")
             recon = load_or_reconstruct(view_dir, cache_path, recon_models)
