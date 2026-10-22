@@ -26,7 +26,7 @@
 - 再構成は MapAnything に GT intrinsics と GT 相対姿勢 (先頭フレーム基準, metric) を入力。gravity は GT pose (world z-up) から。GeoCalib は使わない。
 - pose・画像は benchmark 版 `HGE/sessions/map` (unloc と同じ)、LiDAR depth は raw セッション `ios_<date>_<time>` から timestamp で対応付け。
 - split は unloc (`train/lamar/split.yaml`: train 12 / val 1 / test 3)。評価は Z-FLoc (非重複 L 窓 15/20/35/50/100、最終 10 フレーム全て <1 m で成功、seed 42〜46、0.055 m/px)。
-- 学習窓は連続フレーム、長さ 15〜100。sample は MapAnything density + LiDAR density。対応点は再構成点を GT pose + 4 点 affine で floorplan に写し、壁上の点だけ使う。
+- 学習窓は連続フレーム、長さ 15〜100。sample は MapAnything density + LiDAR density。対応点は再構成点を GT pose + 4 点 affine で floorplan に写し、floorplan 内の点を全て使う (C3 の注釈と同様、壁に限定しない。初版の壁 0.2 m 以内は遠い壁が消えたため廃止、`--max_wall_dist` で復元可)。
 - floorplan (`hge.png` 3278×2334, 再配布不可) は `--plan_size 1024` に縮小して入力 (原寸は ViT の token 数で不可、512 は 1 m = 2.9 px で粗い)。
 - 学習は `--negatives batch --plan_grid 8` (初回 run は feat が chance = ln 1024 に張り付いた: 窓の点が plan 上の数 patch に固まり、負例が同 sample 内だけのため)。`acc`・`chance` も記録。
 - 学習は wandb (`--wandb_project`)。`--vis_every` step ごとに floorplan 上の対応点 (GT 緑 / 予測 橙)・現在位置 (GT 青 / 推定 赤) と現在フレーム RGB を hstack して保存・ログ。

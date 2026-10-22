@@ -52,6 +52,14 @@ def test_on_wall_uses_full_resolution_distance():
     assert result.tolist() == [True, True, False, False]
 
 
+def test_on_plan_keeps_all_points_inside_the_plan():
+    params = synthetic_plan_params()
+    points = lamar.full_res_to_world(np.array([[1000.0, 1200.0], [1100.0, 1200.0], [-10.0, 1200.0]]), params)  # wall, room, outside
+    assert lamar.on_plan(points, params).tolist() == [True, True, False]
+    assert lamar.on_plan(points, params, max_wall_dist_m=0.2).tolist() == [True, False, False]
+    assert not lamar.on_plan(np.array([[np.nan, np.nan]]), params).any()
+
+
 def test_indoor_and_windows():
     timestamps = np.array([3302315254, 3302315254 + 100_000, 3302315254 + 200_000, 3373150184 + 1])  # us
     assert lamar.is_indoor(timestamps).tolist() == [True, True, True, False]

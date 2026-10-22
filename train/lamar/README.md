@@ -10,8 +10,8 @@ Differences from the C3 pipeline:
   of the first frame (the LaMAR world frame is z-up): GeoCalib is not used.
 - Every training sample is a window of consecutive frames (15 to 100, like the evaluation windows). The
   correspondences are not annotated: the reconstructed points are placed in the world with the ground-truth pose
-  of the first camera and on the floorplan with its affine transform; those on walls of the floorplan are the
-  correspondences (`prepare_lamar.py`). The LiDAR depth maps of the phone give a second density map per window.
+  of the first camera and on the floorplan with its affine transform; all those inside the floorplan are the
+  correspondences (`prepare_lamar.py`), as the annotated correspondences of C3 are not restricted to walls. The LiDAR depth maps of the phone give a second density map per window.
 - The floorplan is stored at 1024 px instead of 512 (see Resolution).
 - `train.py` logs to Weights & Biases (`--wandb_project`) and saves a visualization every `--vis_every` steps.
 
@@ -78,7 +78,9 @@ python train/lamar/prepare_lamar.py --map_dir <LAMAR_ROOT>/HGE/sessions/map --ra
 For every train session, windows of 15, 20, 35, 50 and 100 consecutive frames (stride: half the length, no window
 across a gap of the kept frames) are reconstructed with MapAnything. Each window gives:
 - `mapanything/`: density maps of the reconstruction for two confidence thresholds (`--conf 45 75`), three x/z
-  slices and four gammas, with correspondences from the reconstructed points on walls. Where the LiDAR is valid,
+  slices and four gammas, with correspondences from the reconstructed points inside the floorplan
+  (`--max_wall_dist <m>` keeps only those near walls; a first version kept 0.2 m, which dropped most far walls
+  through the reconstruction and affine errors). Where the LiDAR is valid,
   points farther than 10 % (or 0.3 m) from it are left out (`--no_lidar_gate` keeps them). `--plan_source lidar`
   takes the LiDAR points instead, as the Structured3D training of the paper does with the ground-truth depth.
 - `lidar/`: density maps of the LiDAR points, seen from above in the gravity-aligned frame of the first camera.
@@ -90,7 +92,7 @@ so `scene_id` is `hge` for all of them (only the points of a sample are its nega
 loss); `--scene_id cell` names 20 m cells instead, so that windows of different cells are negatives of each other.
 
 To look at the correspondences, `visualize_correspondences.py` draws, for random windows of the cache (or
-`--windows <name>`), the pixels of a frame whose points lie on walls, these points on a density map (`--conf`,
+`--windows <name>`), the pixels of a frame whose points lie inside the floorplan, these points on a density map (`--conf`,
 `--xz`) and on hge.png (cropped around them, the camera in blue), in seven colours from the left (red) to the right
 (violet) of the photo. It reads
 `recon_cache` and needs no GPU:

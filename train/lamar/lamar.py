@@ -340,6 +340,26 @@ def on_wall(points: np.ndarray, plan_params: dict, max_dist_m: float = 0.2) -> n
     return result
 
 
+def on_plan(points: np.ndarray, plan_params: dict, max_wall_dist_m: float | None = None) -> np.ndarray:
+    """
+    Points that give correspondences: inside the floorplan (as the annotations of C3, any structure), or within
+    max_wall_dist_m of a wall if it is given.
+    Args:
+        points (np.ndarray): tensor with shape [N, 2 or 3], world metres (NaN allowed)
+        plan_params (dict): of load_floorplan
+        max_wall_dist_m (float | None): distance to the nearest wall pixel [m], None: no wall test
+
+    Returns:
+        np.ndarray: boolean tensor with shape [N]
+    """
+    if max_wall_dist_m is not None:
+        return on_wall(points, plan_params, max_wall_dist_m)
+    px = world_to_plan_full(points, plan_params["A"])
+    result = np.isfinite(px).all(axis=1)
+    result[result] = in_bounds(px[result], plan_params["full_size"])
+    return result
+
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Frames and windows
 

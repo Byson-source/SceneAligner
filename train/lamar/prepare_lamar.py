@@ -7,8 +7,8 @@ training of the paper).
     python train/lamar/prepare_lamar.py --map_dir <HGE/sessions/map> --raw_dir <raw sessions> --floorplan hge.png --output <data>
 
 Correspondences: the pixels of the density map of a 3D point and the floorplan pixel of that point, placed in the
-world with the ground-truth pose of the first camera and the affine transform of the floorplan (lamar.py); only
-points on walls of the floorplan are kept. With --plan_source recon (default), the points are those of the
+world with the ground-truth pose of the first camera and the affine transform of the floorplan (lamar.py); all
+points inside the floorplan are kept, as the annotations of C3 (--max_wall_dist: only those near walls). With --plan_source recon (default), the points are those of the
 reconstruction, gated by the LiDAR depth where it exists; with --plan_source lidar, the LiDAR points. The CSV rows also hold the photo and the position of the last camera, for the visualizations of
 train.py.
 """
@@ -26,7 +26,7 @@ from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lamar import (SEQ_LENGTHS, Session, filter_ground_points, ground_rotation, iter_train_windows,  # noqa: E402
-                   lidar_points_cam0, load_floorplan, load_session, load_split, on_wall, top_down_projection,
+                   lidar_points_cam0, load_floorplan, load_session, load_split, on_plan, top_down_projection,
                    train_frames, world_to_plan)
 from reconstruction import load_mapanything, load_recon, reconstruct, save_recon  # noqa: E402
 from scenealigner.evaluation import get_camera_center_on_density_px, process_gt_correspondences  # noqa: E402
@@ -115,22 +115,23 @@ def window_world(frames: Session, recon: dict, plan_source: str, use_lidar_gate:
     return world, lidar
 
 
-def wall_correspondences(world: np.ndarray, plan_params: dict, max_points: int, rng: np.random.Generator) -> list:
+def plan_correspondences(world: np.ndarray, plan_params: dict, max_points: int, rng: np.random.Generator,
+                         max_wall_dist_m: float | None = None) -> list:
     """
-    Per view, the pixels whose 3D points lie on a wall of the floorplan and the floorplan pixels of these points.
+    Per view, the pixels whose 3D points lie inside the floorplan (lamar.on_plan) and the floorplan pixels of these points.
     Args:
         world (np.ndarray): tensor with shape [S, H, W, 3], world points of the pixels (NaN where unused)
         plan_params (dict): of lamar.load_floorplan
         max_points (int): at most this many correspondences in the window, drawn at random
         rng (np.random.Generator): random generator
+        max_wall_dist_m (float | None): only the points within this distance of a wall [m], None: all
 
     Returns:
         list: per view, {"tensor_coords": [N, 2] (u, v) pixels, "plan_coords": [N, 2] floorplan pixels} or None
     """
     S, H, W, _ = world.shape
     flat = world.reshape(-1, 3)
-    wall = on_wall(flat, plan_params)
-    idx = np.nonzero(wall)[0]
+    idx = np.nonzero(on_plan(flat, plan_params, max_wall_dist_m))[0]
     if len(idx) > max_points:
         idx = np.sort(rng.choice(idx, max_points, replace=False))
     plan_px = world_to_plan(flat[idx], plan_params).astype(np.float32)
@@ -153,7 +154,7 @@ def mapanything_samples(recon: dict, corrs: list, conf_thresholds: list, plan_pa
     correspondences, as prepare_c3.generate. Returns their rows.
     Args:
         recon (dict): of reconstruction.reconstruct
-        corrs (list): of wall_correspondences
+        corrs (list): of plan_correspondences
         conf_thresholds (list): confidence percentiles
         plan_params (dict): of lamar.load_floorplan
         output (str): data directory
@@ -187,10 +188,10 @@ def mapanything_samples(recon: dict, corrs: list, conf_thresholds: list, plan_pa
 
 
 def lidar_samples(lidar_cam0: np.ndarray, recon: dict, plan_params: dict, c2w0: np.ndarray, output: str, name: str,
-                  min_correspondences: int) -> list:
+                  min_correspondences: int, max_wall_dist_m: float | None = None) -> list:
     """
     Saves the density maps of the LiDAR points of a window (one per gamma), seen from above in the gravity-aligned
-    frame of camera 0, with their correspondences (the points on walls). Returns their rows.
+    frame of camera 0, with their correspondences (lamar.on_plan). Returns their rows.
     Args:
         lidar_cam0 (np.ndarray): tensor with shape [S, H, W, 3], NaN where missing
         recon (dict): of reconstruction.reconstruct (gravity and extrinsics)
@@ -199,6 +200,7 @@ def lidar_samples(lidar_cam0: np.ndarray, recon: dict, plan_params: dict, c2w0: 
         output (str): data directory
         name (str): file stem of the window, relative to output
         min_correspondences (int): samples with fewer correspondences are not saved
+        max_wall_dist_m (float | None): only the points within this distance of a wall [m], None: all
 
     Returns:
         list: rows {"density", "correspondences", "camera_density"}
@@ -212,9 +214,9 @@ def lidar_samples(lidar_cam0: np.ndarray, recon: dict, plan_params: dict, c2w0: 
     keep = filter_ground_points(ground)
     ground, points = ground[keep], points[keep]
     proj_params = top_down_projection(ground, R_rect, DENSITY_SIZE)
-    wall = on_wall(world_points(points, c2w0), plan_params)
-    density_px = get_density_coordinates(ground[wall], proj_params)
-    plan_px = world_to_plan(world_points(points[wall], c2w0), plan_params).astype(np.float32)
+    keep = on_plan(world_points(points, c2w0), plan_params, max_wall_dist_m)
+    density_px = get_density_coordinates(ground[keep], proj_params)
+    plan_px = world_to_plan(world_points(points[keep], c2w0), plan_params).astype(np.float32)
     if len(density_px) < min_correspondences or not is_consistent(density_px, plan_px, plan_params["plan_size"]):
         return []
     corr_path = f"{name}.npy"
@@ -287,6 +289,8 @@ def main():
     parser.add_argument("--cell_m", type=float, default=20.0)
     parser.add_argument("--max_points", type=int, default=20000, help="correspondences kept per window")
     parser.add_argument("--min_correspondences", type=int, default=200, help="samples with fewer are dropped")
+    parser.add_argument("--max_wall_dist", type=float, default=None,
+                        help="only the points within this distance of a wall [m]; default: all points inside the floorplan")
     parser.add_argument("--mapanything_model", default="facebook/map-anything")
     parser.add_argument("--recon_cache", default=None, help="directory of cached reconstructions (read and written)")
     parser.add_argument("--seed", type=int, default=0)
@@ -325,7 +329,7 @@ def main():
             world, lidar = window_world(frames, recon, args.plan_source, not args.no_lidar_gate)
             if world is None:
                 continue
-            corrs = wall_correspondences(world, plan_params, args.max_points, rng)
+            corrs = plan_correspondences(world, plan_params, args.max_points, rng, args.max_wall_dist)
 
             common = {"scene_id": scene_id_of(frames, args.scene_id, args.cell_m), "floorplan": plan_path,
                       "rgb": os.path.abspath(frames.image_paths[-1]),
@@ -334,7 +338,7 @@ def main():
                                           args.min_correspondences)
             if lidar is not None and not args.no_lidar_samples:
                 samples += lidar_samples(lidar, recon, plan_params, frames.c2w[0], args.output, os.path.join("lidar", name),
-                                         args.min_correspondences)
+                                         args.min_correspondences, args.max_wall_dist)
             for sample in samples:
                 sample.update(common)
                 sample["camera_plan"] = "{:.2f} {:.2f}".format(*common["camera_plan"])

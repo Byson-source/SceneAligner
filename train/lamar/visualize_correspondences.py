@@ -1,5 +1,5 @@
 """Correspondences of the training data of prepare_lamar.py drawn on the photo, the density map and the floorplan:
-the pixels of a frame whose reconstructed points lie on walls, these points on the density map of one MapAnything
+the pixels of a frame whose reconstructed points lie inside the floorplan (prepare_lamar.py), these points on the density map of one MapAnything
 sample (--conf, --xz, gamma 0.5) and on hge.png (full resolution, cropped around them). A point keeps one of seven
 colours in the three images (from the left to the right of the photo). Only the points of the density map are drawn.
 Reads the reconstructions cached by prepare_lamar.py (--recon_cache): no GPU.
@@ -18,7 +18,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lamar import load_floorplan, load_session, train_frames, world_to_plan_full  # noqa: E402
-from prepare_lamar import wall_correspondences, window_world  # noqa: E402
+from prepare_lamar import plan_correspondences, window_world  # noqa: E402
 from reconstruction import load_recon  # noqa: E402
 from prepare_lamar import DENSITY_SIZE  # noqa: E402
 from scenealigner.evaluation import process_gt_correspondences  # noqa: E402
@@ -62,15 +62,15 @@ def breakdown(tc: np.ndarray, s: int, masks: dict) -> np.ndarray:
         masks (dict): of filter_masks
 
     Returns:
-        np.ndarray: counts with shape [1 + len(masks)] (wall, conf, height, xz)
+        np.ndarray: counts with shape [1 + len(masks)] (plan, conf, height, xz)
     """
     u, v = tc[:, 0].astype(int), tc[:, 1].astype(int)
     return np.array([len(tc)] + [masks[k][s, v, u].sum() for k in masks])
 
 
 def fmt(counts: np.ndarray, masks: dict) -> str:
-    """Counts of breakdown as "wall 164 > conf 120 > height 17 > xz 17"."""
-    return " > ".join(f"{k} {n}" for k, n in zip(["wall", *masks], counts))
+    """Counts of breakdown as "plan 164 > conf 120 > height 17 > xz 17"."""
+    return " > ".join(f"{k} {n}" for k, n in zip(["plan", *masks], counts))
 
 
 def main():
@@ -90,6 +90,7 @@ def main():
     parser.add_argument("--plan_source", default="recon", choices=["recon", "lidar"])
     parser.add_argument("--no_lidar_gate", action="store_true")
     parser.add_argument("--max_points", type=int, default=20000, help="as prepare_lamar.py")
+    parser.add_argument("--max_wall_dist", type=float, default=None, help="as prepare_lamar.py")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -115,7 +116,7 @@ def main():
         if world is None:
             print(f"{name}: no LiDAR")
             continue
-        corrs = wall_correspondences(world, plan_params, args.max_points, rng)
+        corrs = plan_correspondences(world, plan_params, args.max_points, rng, args.max_wall_dist)
         proj_params, points, proj_mask = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"],
                                                                          args.conf, args.xz, density_size=DENSITY_SIZE)
         density_img = np.array(render_training_map(points, proj_params, 0.5).convert("RGB"))
