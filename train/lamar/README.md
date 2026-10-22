@@ -33,10 +33,9 @@ Differences from the C3 pipeline:
   (the name without `_<NNN>`), matched to the photos by timestamp. `shells/lamar/download_lamar.sh` fetches the 15 raw sessions
   of the split (about 15 GB) from `https://cvg-data.inf.ethz.ch/lamar/raw/HGE/sessions/`:
   ```bash
-  qsub shells/lamar/download_lamar.sh   # from the repository root; LAMAR_ROOT defaults to /groups/gai51740/RBT3/umemura/zfloc/lamar
+  qsub ~/oss/SceneAligner/shells/lamar/download_lamar.sh   # LAMAR_ROOT defaults to /groups/gai51740/RBT3/umemura/zfloc/lamar
   ```
-  The URL of the benchmark release is set in the script (`BENCH_URL`) but was not verified: place
-  `HGE/sessions/map` by hand if its download fails. A raw session outside the split (e.g. `ios_2022-01-20_17.30.07`)
+  The benchmark release `HGE.zip` (7 GB) is downloaded from `BENCH_URL` when `HGE/sessions/map` is missing. A raw session outside the split (e.g. `ios_2022-01-20_17.30.07`)
   is not used.
 - World to floorplan: the affine transform fitted on four building entrances by UnLoc (Appendix A.1.2), as in
   Z-FLoc: about 18.3 px/m (0.0546 m/px), with a reflection. Errors are converted with 0.055 m/px, the value Z-FLoc
@@ -116,8 +115,8 @@ evaluates the val session (indoor frames) for model selection.
 
 ## ABCI jobs
 
-The jobs in `shells/` (PBS, conda environment `tartanimu`) are submitted from the repository root; every GPU
-job has a rt_HF and a rt_HG version, thin wrappers that pass `DATA` and `RTYPE` to the common script:
+The jobs in `shells/` (PBS, conda environment `scenealigner`) run in `REPO`, by default `~/oss/SceneAligner`
+(PBS runs a copy of the script, so neither its location nor the submission directory is used); every GPU job has a rt_HF and a rt_HG version, thin wrappers that pass `DATA` and `RTYPE` to the common script:
 
 ```bash
 qsub shells/lamar/download_lamar.sh                                        # raw sessions, HGE/sessions/map, hge.png
@@ -126,7 +125,7 @@ qsub shells/train/lamar_hg.sh                                              # tra
 qsub -v CHECKPOINT=outputs/lamar_lamar_hge_rt_HG shells/lamar/evaluate_hg.sh  # val, then test
 ```
 
-`LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
+`REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
 `qsub -v`, e.g. `qsub -v DATA=data/lamar_hge,EPOCHS=4 shells/train/lamar_hf.sh`.
 
 ## Resolution

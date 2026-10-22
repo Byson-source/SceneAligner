@@ -10,9 +10,9 @@
 # Called by lamar_hf.sh / lamar_hg.sh with DATA and RTYPE; can be submitted alone: qsub -v DATA=<data> shells/train/train.sh
 
 source /etc/profile.d/modules.sh
-export PATH=${HOME}/miniconda3/bin:$PATH && source activate tartanimu
+export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner
 export OMP_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 MKL_NUM_THREADS=1
-REPO="${REPO:-${PBS_O_WORKDIR:-$(pwd)}}"  # qsub from the repository root
+REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v REPO=<dir>
 cd "$REPO"
 set -euo pipefail
 

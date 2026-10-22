@@ -11,9 +11,9 @@
 # jhcho99/SceneAligner). ZFLOC_NPZ (optional): Z-FLoc assets/metadata/hge.npz, to evaluate exactly its test frames.
 
 source /etc/profile.d/modules.sh
-export PATH=${HOME}/miniconda3/bin:$PATH && source activate tartanimu
+export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner
 export OMP_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 MKL_NUM_THREADS=1
-REPO="${REPO:-${PBS_O_WORKDIR:-$(pwd)}}"  # qsub from the repository root
+REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v REPO=<dir>
 cd "$REPO"
 set -euo pipefail
 

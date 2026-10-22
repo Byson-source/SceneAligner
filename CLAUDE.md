@@ -4,7 +4,7 @@
 1. Please reply in Japanese as concise as possible
 2. Always commit to branch called "develop"
 3. Be willing to create appropriate folder structure and helper functions to foster readability. Code as concise as possible
-4. always activate 'tartanimu' conda environment by doing `export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner`
+4. always activate 'scenealigner' conda environment by doing `export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner`
 5. for every shell script, please refer to abci doc and you need to write for example:
    ```bash
    #!/bin/bash
@@ -39,12 +39,12 @@
 - 実装済み。クラウド環境では py_compile・`bash -n`・`pytest train/lamar/tests` のみ検証。GPU / LaMAR データ / MapAnything での実行は未確認。
 
 未確認事項
-- benchmark 版 `HGE/sessions/map` の zip URL (`download_lamar.sh` の `BENCH_URL`)。
 - raw セッションの depth sensor id と `rigs.txt` の変換、depth と画像の timestamp 一致率。
 - test `ios_2022-01-18_17.10.39_000` は index shift で 516 フレーム、Z-FLoc は 483 (`--zfloc_npz` で照合)。
 - ABCI doc はクラウドから取得できず、PBS ヘッダは develop の `shells/test.sh` を雛形にした。
+- benchmark 版 `HGE.zip` は `BENCH_URL` で取得できた (job 2741583)。`hge.png` は `FLOORPLAN_SRC` に無く未コピー。
 
-次の手順 (ABCI, repository root で qsub)
+次の手順 (ABCI。shell は REPO 既定 `~/oss/SceneAligner` なのでどこからでも qsub 可)
 1. `qsub shells/lamar/download_lamar.sh`
 2. `python train/lamar/lamar.py --check ...` で session 解決・z-up・kept 数 (410/397/483)・depth 一致率を確認
 3. 1 窓の smoke (MapAnything の pose が GT と一致、対応点の相似フィット det>0)

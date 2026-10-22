@@ -6,6 +6,6 @@
 #PBS -v RTYPE=rt_HG
 #PBS -m abe
 #PBS -k oed
-# LaMAR HGE training data (rt_HG). Submit from the repository root: qsub shells/lamar/prepare_hg.sh
-REPO="${REPO:-${PBS_O_WORKDIR:-$(pwd)}}"
-DATA="${DATA:-data/lamar_hge}" RTYPE=rt_HG bash "$REPO/shells/lamar/prepare.sh"
+# LaMAR HGE training data (rt_HG). Submit from any directory: qsub shells/lamar/prepare_hg.sh
+REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v REPO=<dir>
+REPO="$REPO" DATA="${DATA:-data/lamar_hge}" RTYPE=rt_HG bash "$REPO/shells/lamar/prepare.sh"

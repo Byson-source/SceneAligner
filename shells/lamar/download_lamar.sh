@@ -8,7 +8,7 @@
 #PBS -k oed
 # Downloads and extracts the raw LaMAR HGE phone sessions needed by train/lamar/split.yaml.
 #
-#   qsub shells/lamar/download_lamar.sh                                  # from the repository root
+#   qsub ~/oss/SceneAligner/shells/lamar/download_lamar.sh               # from any directory
 #   qsub -v LAMAR_ROOT=<dir>,ARGS="--all --rm-zip" shells/lamar/download_lamar.sh
 #   bash shells/lamar/download_lamar.sh [LAMAR_ROOT] [--all] [--rm-zip]
 #
@@ -23,7 +23,7 @@
 # not redistributable and is copied from FLOORPLAN_SRC when that file exists.
 set -euo pipefail
 
-REPO=${HOME}/oss/SceneAligner
+REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v REPO=<dir>
 SPLIT="${SPLIT:-$REPO/train/lamar/split.yaml}"
 LAMAR_ROOT="${LAMAR_ROOT:-/groups/gai51740/RBT3/umemura/zfloc/lamar}"
 RAW_URL="${RAW_URL:-https://cvg-data.inf.ethz.ch/lamar/raw/HGE/sessions}"
@@ -57,7 +57,7 @@ for name in $sessions; do
         continue
     fi
     echo "$name: downloading"
-    wget -c -q --show-progress -P "$LAMAR_ROOT" "$RAW_URL/$name.zip"
+    wget -c --progress=dot:giga -P "$LAMAR_ROOT" "$RAW_URL/$name.zip"
     echo "$name: extracting"
     unzip -n -q "$LAMAR_ROOT/$name.zip" -d "$LAMAR_ROOT"
     if [ ! -d "$LAMAR_ROOT/$name/raw_data/depth" ]; then
@@ -75,7 +75,7 @@ fi
 # Benchmark release: HGE/sessions/map with the floorplan-aligned trajectories
 if [ ! -f "$LAMAR_ROOT/HGE/sessions/map/trajectories.txt" ]; then
     echo "HGE/sessions/map: downloading the benchmark release from $BENCH_URL"
-    if wget -c -q --show-progress -P "$LAMAR_ROOT" "$BENCH_URL"; then
+    if wget -c --progress=dot:giga -P "$LAMAR_ROOT" "$BENCH_URL"; then
         unzip -n -q "$LAMAR_ROOT/$(basename "$BENCH_URL")" -d "$LAMAR_ROOT"
     else
         echo "WARNING: download failed. Obtain the HGE benchmark data from https://lamar.ethz.ch/lamar/ and place"
