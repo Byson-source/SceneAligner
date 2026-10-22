@@ -47,8 +47,12 @@ def parse_point(value):
 class DensityFloorplanDataset(Dataset):
     """Pairs of a density map and a floorplan with their correspondences, listed in the CSV files of a folder."""
 
-    def __init__(self, root, num_points=1024, min_points=10000, image_size=None):
+    def __init__(self, root, num_points=1024, min_points=10000, image_size=None, plan_grid=0):
+        """plan_grid: if > 0, one correspondence per cell of plan_grid floorplan pixels, so that the positives of a
+        sample are distinguishable on the floorplan (LaMAR: the points of a window lie in a few patches of the
+        building plan); the free slots are random points, used as negatives only."""
         self.root, self.num_points, self.min_points, self.image_size = root, num_points, min_points, image_size
+        self.plan_grid = plan_grid
         files = sorted(glob.glob(os.path.join(root, "*.csv")))
         self.data = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
         self.jitter_plan = T.ColorJitter(brightness=0.5, contrast=0.5, saturation=0.5, hue=0.1)
@@ -94,6 +98,10 @@ class DensityFloorplanDataset(Dataset):
         plan, pts_plan, pts_density, camera_plan = self.random_crop(plan, pts_plan, pts_density, camera_plan)
         density, pts_density, pts_plan, camera_density = self.random_crop(density, pts_density, pts_plan, camera_density)
         plan, density = self.jitter_plan(plan), self.jitter_density(density)
+        if self.plan_grid:  # one random correspondence per floorplan cell
+            perm = np.random.permutation(len(pts_plan))
+            _, first = np.unique(np.floor(pts_plan[perm] / self.plan_grid), axis=0, return_index=True)
+            pts_plan, pts_density = pts_plan[perm[first]], pts_density[perm[first]]
 
         # Pixels -> [-1, 1] (grid_sample), without duplicates
         camera_density = 2 * ((camera_density + 0.5) / np.float32(density.size)) - 1

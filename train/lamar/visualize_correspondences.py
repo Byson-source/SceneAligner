@@ -1,6 +1,7 @@
-"""Correspondences of the training data of prepare_lamar.py drawn on the photo and the floorplan: the pixels of a
-frame whose reconstructed points lie on walls, and the pixels of these points on hge.png (full resolution, cropped
-around them). A pixel and its floorplan point share one of seven colours (from the left to the right of the photo).
+"""Correspondences of the training data of prepare_lamar.py drawn on the photo, the density map and the floorplan:
+the pixels of a frame whose reconstructed points lie on walls, these points on the density map of one MapAnything
+sample (--conf, --xz, gamma 0.5) and on hge.png (full resolution, cropped around them). A point keeps one of seven
+colours in the three images (from the left to the right of the photo). Only the points of the density map are drawn.
 Reads the reconstructions cached by prepare_lamar.py (--recon_cache): no GPU.
 
     python train/lamar/visualize_correspondences.py --map_dir <HGE/sessions/map> --raw_dir <raw sessions> \
@@ -19,6 +20,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lamar import load_floorplan, load_session, train_frames, world_to_plan_full  # noqa: E402
 from prepare_lamar import wall_correspondences, window_world  # noqa: E402
 from reconstruction import load_recon  # noqa: E402
+from prepare_lamar import DENSITY_SIZE  # noqa: E402
+from scenealigner.evaluation import process_gt_correspondences  # noqa: E402
+from scenealigner.inference import reconstruct_projection_geometry  # noqa: E402
+from scenealigner.training import render_training_map  # noqa: E402
 from scenealigner.visualization import draw_rgb_plan_correspondences  # noqa: E402
 
 WINDOW_NAME = re.compile(r"(?P<session>.+)_s(?P<start>\d{5})_L(?P<length>\d+)$")  # prepare_lamar.main
@@ -35,6 +40,8 @@ def main():
     parser.add_argument("--num_windows", type=int, default=10, help="random windows of the cache without --windows")
     parser.add_argument("--frames", type=int, nargs="+", default=[0, -1], help="frames of a window (indices, -1: last)")
     parser.add_argument("--num_points", type=int, default=300, help="correspondences drawn per frame")
+    parser.add_argument("--conf", type=float, default=45, help="confidence threshold of the density map (percentile)")
+    parser.add_argument("--xz", type=float, default=2.5, help="x/z slice of the density map")
     parser.add_argument("--plan_source", default="recon", choices=["recon", "lidar"])
     parser.add_argument("--no_lidar_gate", action="store_true")
     parser.add_argument("--max_points", type=int, default=20000, help="as prepare_lamar.py")
@@ -64,22 +71,32 @@ def main():
             print(f"{name}: no LiDAR")
             continue
         corrs = wall_correspondences(world, plan_params, args.max_points, rng)
+        proj_params, points, proj_mask = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"],
+                                                                         args.conf, args.xz, density_size=DENSITY_SIZE)
+        density_img = np.array(render_training_map(points, proj_params, 0.5).convert("RGB"))
         for frame in args.frames:
             s = frame % length
             corr = corrs[s]
             if corr is None:
                 print(f"{name} frame {s}: too few correspondences")
                 continue
-            pick = rng.choice(len(corr["tensor_coords"]), min(args.num_points, len(corr["tensor_coords"])), replace=False)
-            u, v = corr["tensor_coords"][pick].astype(int).T
+            tc = corr["tensor_coords"]
+            tc = tc[proj_mask[s, tc[:, 1].astype(int), tc[:, 0].astype(int)]]  # points of the density map
+            if len(tc) == 0:
+                print(f"{name} frame {s}: no correspondence on the density map")
+                continue
+            tc = tc[rng.choice(len(tc), min(args.num_points, len(tc)), replace=False)]
+            u, v = tc.astype(int).T
             plan_px = world_to_plan_full(world[s, v, u], plan_params["A"])  # pixels of hge.png
+            density_px, _ = process_gt_correspondences({"tensor_coords": tc, "plan_coords": plan_px}, s, recon["points_cam0"],
+                                                       proj_params, proj_mask)
             c2w = frames.c2w[s]
             camera_px = world_to_plan_full(c2w[:3, 3], plan_params["A"])
             camera_dir = world_to_plan_full(c2w[:3, 3] + c2w[:3, 2], plan_params["A"]) - camera_px  # optical axis
-            image = draw_rgb_plan_correspondences(recon["preprocessed_images"][s], corr["tensor_coords"][pick], plan_full,
-                                                  plan_px, camera_px, camera_dir)
+            image = draw_rgb_plan_correspondences(recon["preprocessed_images"][s], tc, plan_full, plan_px, camera_px,
+                                                  camera_dir, density_img, density_px)
             Image.fromarray(image).save(os.path.join(args.output, f"{name}_f{s:03d}.png"))
-            print(f"{name} frame {s}: {len(corr['tensor_coords'])} correspondences, {len(pick)} drawn")
+            print(f"{name} frame {s}: {len(corr['tensor_coords'])} correspondences, {len(tc)} drawn")
 
 
 if __name__ == "__main__":

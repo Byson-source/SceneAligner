@@ -40,13 +40,18 @@ def ramp(step, start, duration):
     return (step - start) / duration
 
 
-def compute_loss(model, batch, step, total_steps):
-    """Loss of a batch at a training step, its terms and the weights of the curriculum, and the predicted
-    floorplan coordinates (B, N, 2) in [0, 1] of the density-map points."""
+def compute_loss(model, batch, step, total_steps, negatives="scene"):
+    """Loss of a batch at a training step, its terms, the weights of the curriculum and diagnostics, and the
+    predicted floorplan coordinates (B, N, 2) in [0, 1] of the density-map points.
+
+    negatives: "scene" (the points of other samples of the same scene are not negatives) or "batch" (all points of
+    the batch are negatives, e.g. windows at different places of one building)."""
     density_img, plan_img = batch["density_img"].cuda(), batch["plan_img"].cuda()
     pts_density, pts_plan, valid = batch["density_pts"].cuda(), batch["plan_pts"].cuda(), batch["valid"].cuda()
     scene_ids = np.array(batch["scene_id"])
     same_scene = torch.tensor((scene_ids[:, None] == scene_ids[None]) & ~np.eye(len(scene_ids), dtype=bool)).cuda()
+    if negatives == "batch":
+        same_scene.zero_()
 
     feature_maps = []
     for img in (density_img, plan_img):
@@ -65,6 +70,14 @@ def compute_loss(model, batch, step, total_steps):
     gy, gx = torch.meshgrid(torch.arange(grid_dim), torch.arange(grid_dim), indexing="ij")
     grid_coords = (torch.stack([gx, gy], dim=-1).float().cuda().reshape(-1, 2) + 0.5) / grid_dim
     pred = torch.matmul(prob, grid_coords)
+
+    # Diagnostics: valid points whose most similar plan patch is within one patch of the ground truth, and the
+    # feature matching loss of uniform descriptors (log of the number of valid points of a sample)
+    gt_patch = ((pts_plan + 1) / 2 * grid_dim).floor().clamp(0, grid_dim - 1)
+    best = sim_matrix.argmax(dim=-1)
+    near = ((torch.stack([best % grid_dim, best // grid_dim], dim=-1) - gt_patch).abs().amax(dim=-1) <= 1) & valid
+    losses["acc"] = (near.sum() / valid.sum().clamp(min=1)).detach()
+    losses["chance"] = valid.sum(dim=1).clamp(min=1).float().log().mean()
 
     # Curriculum: the regression loss comes in after 10 % of the iterations, the structural ones after 20 %
     w_regr = ramp(step, total_steps // 10, total_steps // 10)
@@ -107,6 +120,9 @@ def main():
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--resolutions", type=int, nargs="+", default=[512, 768, 1024, 1280], help="one per batch, at random")
     parser.add_argument("--min_points", type=int, default=10000, help="correspondences that a random crop must keep")
+    parser.add_argument("--plan_grid", type=int, default=0, help="one correspondence per cell of this many floorplan px (0: all)")
+    parser.add_argument("--negatives", default="scene", choices=["scene", "batch"],
+                        help="batch: the points of other samples of the same scene are negatives too")
     parser.add_argument("--dinov3_weights", default=None, help="Meta's DINOv3 ViT-B/16 weights")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--wandb_project", default=None, help="logs the losses and the visualizations to Weights & Biases")
@@ -123,7 +139,7 @@ def main():
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     image_size = args.resolutions[0] if len(args.resolutions) == 1 else None
-    dataset = DensityFloorplanDataset(args.data, min_points=args.min_points, image_size=image_size)
+    dataset = DensityFloorplanDataset(args.data, min_points=args.min_points, image_size=image_size, plan_grid=args.plan_grid)
     loader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=4, collate_fn=partial(collate, resolutions=args.resolutions))
     total_steps = len(loader) * args.epochs
 
@@ -134,18 +150,19 @@ def main():
 
     os.makedirs(os.path.join(args.output, "vis"), exist_ok=True)
     log = csv.writer(open(os.path.join(args.output, "log.csv"), "w", buffering=1))
-    log.writerow(["step", "loss", "feat", "regr", "geo", "topo"])
+    columns = ("feat", "regr", "geo", "topo", "acc", "chance")
+    log.writerow(["step", "loss", *columns])
     step = 0
     for epoch in range(args.epochs):
         for batch in tqdm(loader, desc=f"epoch {epoch + 1}/{args.epochs}"):
             optimizer.zero_grad()
-            loss, losses, pred = compute_loss(model, batch, step, total_steps)
+            loss, losses, pred = compute_loss(model, batch, step, total_steps, args.negatives)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             step += 1
             if step % 100 == 0:
-                log.writerow([step, loss.item()] + [losses[k].item() if k in losses else "" for k in ("feat", "regr", "geo", "topo")])
+                log.writerow([step, loss.item()] + [losses[k].item() if k in losses else "" for k in columns])
                 if wandb:
                     wandb.log({"loss": loss.item(), "epoch": epoch, **{k: v.item() for k, v in losses.items()}}, step=step)
             if args.vis_every and step % args.vis_every == 0:

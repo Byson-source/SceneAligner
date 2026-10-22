@@ -86,36 +86,48 @@ def draw_training_sample(plan_img, pts_plan_gt, pts_plan_pred, valid, camera_pla
     return np.hstack([canvas, photo])
 
 
+
 RAINBOW = ((230, 0, 0), (255, 140, 0), (240, 220, 0), (0, 170, 0), (0, 90, 255), (75, 0, 160), (180, 0, 220))  # 7 colours
 
 
-def draw_rgb_plan_correspondences(rgb, rgb_px, plan_img, plan_px, camera_px=None, camera_dir=None, margin_px=60, radius=4):
-    """Correspondences of a photo with the floorplan: the photo with its pixels and the floorplan, cropped around
-    the corresponding points, with these points. A point and its correspondence share one of seven colours, from
-    red (left of the photo) to violet (right). Returns an RGB array with the photo next to the floorplan.
+def draw_colored_points(img, points, colors, radius=4):
+    """Points with a black outline, one colour each."""
+    canvas = np.ascontiguousarray(img.copy())
+    for (x, y), color in zip(np.round(points).astype(int), colors):
+        cv2.circle(canvas, (int(x), int(y)), radius, (0, 0, 0), -1, lineType=cv2.LINE_AA)
+        cv2.circle(canvas, (int(x), int(y)), radius - 1, tuple(int(c) for c in color), -1, lineType=cv2.LINE_AA)
+    return canvas
 
-    rgb: [H, W, 3] uint8; rgb_px, plan_px: [N, 2] (u, v) pixels; plan_img: [h, w(, 3)] uint8;
+
+def draw_rgb_plan_correspondences(rgb, rgb_px, plan_img, plan_px, camera_px=None, camera_dir=None, density_img=None,
+                                  density_px=None, margin_px=60):
+    """Correspondences of a photo with the floorplan (and the density map): the photo with its pixels, the density
+    map with their points, and the floorplan cropped around them. A point keeps one of seven colours in every
+    image, from red (left of the photo) to violet (right). Returns an RGB array, the images side by side.
+
+    rgb: [H, W, 3] uint8; rgb_px, plan_px, density_px: [N, 2] (u, v) pixels; plan_img, density_img: [h, w(, 3)] uint8;
     camera_px, camera_dir: [2] position and viewing direction of the camera on the floorplan, or None.
     """
     colors = np.array(RAINBOW)[np.clip((rgb_px[:, 0] / rgb.shape[1] * len(RAINBOW)).astype(int), 0, len(RAINBOW) - 1)]
-    photo = np.ascontiguousarray(rgb.copy())
-    for (x, y), color in zip(np.round(rgb_px).astype(int), colors):
-        cv2.circle(photo, (int(x), int(y)), radius, (0, 0, 0), -1, lineType=cv2.LINE_AA)
-        cv2.circle(photo, (int(x), int(y)), radius - 1, tuple(int(c) for c in color), -1, lineType=cv2.LINE_AA)
+    H = rgb.shape[0]
+    panels = [draw_colored_points(rgb, rgb_px, colors)]
+    if density_img is not None:
+        zoom = H / density_img.shape[0]
+        density = cv2.resize(density_img, (round(density_img.shape[1] * zoom), H), interpolation=cv2.INTER_AREA)
+        panels.append(draw_colored_points(density, np.asarray(density_px) * zoom, colors))
 
     plan = plan_img if plan_img.ndim == 3 else np.repeat(plan_img[..., None], 3, axis=2)
     anchors = plan_px if camera_px is None else np.vstack([plan_px, camera_px])
     x0, y0 = np.maximum(np.floor(anchors.min(axis=0)).astype(int) - margin_px, 0)
     x1, y1 = np.minimum(np.ceil(anchors.max(axis=0)).astype(int) + margin_px, [plan.shape[1], plan.shape[0]])
-    zoom = photo.shape[0] / (y1 - y0)  # crop scaled to the height of the photo
-    crop = cv2.resize(plan[y0:y1, x0:x1], (max(1, round((x1 - x0) * zoom)), photo.shape[0]), interpolation=cv2.INTER_AREA)
-    crop = np.ascontiguousarray(crop)
-    for (x, y), color in zip(np.round((plan_px - [x0, y0]) * zoom).astype(int), colors):
-        cv2.circle(crop, (int(x), int(y)), radius, (0, 0, 0), -1, lineType=cv2.LINE_AA)
-        cv2.circle(crop, (int(x), int(y)), radius - 1, tuple(int(c) for c in color), -1, lineType=cv2.LINE_AA)
+    zoom = H / (y1 - y0)  # crop scaled to the height of the photo
+    crop = cv2.resize(plan[y0:y1, x0:x1], (max(1, round((x1 - x0) * zoom)), H), interpolation=cv2.INTER_AREA)
+    crop = draw_colored_points(crop, (plan_px - [x0, y0]) * zoom, colors)
     if camera_px is not None:
         center = (np.asarray(camera_px) - [x0, y0]) * zoom
         if camera_dir is not None:
             draw_camera_frustum(crop, center, np.asarray(camera_dir, dtype=np.float64), BLUE, length=40, width=30)
-        cv2.circle(crop, tuple(int(v) for v in np.round(center)), radius + 2, BLUE, -1, lineType=cv2.LINE_AA)
-    return np.hstack([photo, crop])
+        cv2.circle(crop, tuple(int(v) for v in np.round(center)), 6, BLUE, -1, lineType=cv2.LINE_AA)
+    panels.append(crop)
+    gap = np.full((H, 8, 3), 255, dtype=np.uint8)
+    return np.hstack([x for panel in panels for x in (panel, gap)][:-1])

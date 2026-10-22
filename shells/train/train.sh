@@ -22,6 +22,9 @@ RTYPE="${RTYPE:-rt_HG}"
 RUN="${RUN:-outputs/lamar_$(basename "$DATA")_${RTYPE}}"
 EPOCHS="${EPOCHS:-2}"
 WANDB_PROJECT="${WANDB_PROJECT:-scenealigner-lamar}"
+NEGATIVES="${NEGATIVES:-batch}"  # the other windows of the batch are negatives (all windows share the floorplan)
+PLAN_GRID="${PLAN_GRID:-8}"      # one correspondence per 8 px (1.4 m) of the 1024 px floorplan
 
 python train.py --data "$DATA" --output "$RUN" --epochs "$EPOCHS" --resolutions 1024 1280 --min_points 1000 \
+    --negatives "$NEGATIVES" --plan_grid "$PLAN_GRID" \
     --wandb_project "$WANDB_PROJECT" --wandb_name "$(basename "$RUN")"

@@ -28,10 +28,11 @@
 - split は unloc (`train/lamar/split.yaml`: train 12 / val 1 / test 3)。評価は Z-FLoc (非重複 L 窓 15/20/35/50/100、最終 10 フレーム全て <1 m で成功、seed 42〜46、0.055 m/px)。
 - 学習窓は連続フレーム、長さ 15〜100。sample は MapAnything density + LiDAR density。対応点は再構成点を GT pose + 4 点 affine で floorplan に写し、壁上の点だけ使う。
 - floorplan (`hge.png` 3278×2334, 再配布不可) は `--plan_size 1024` に縮小して入力 (原寸は ViT の token 数で不可、512 は 1 m = 2.9 px で粗い)。
+- 学習は `--negatives batch --plan_grid 8` (初回 run は feat が chance = ln 1024 に張り付いた: 窓の点が plan 上の数 patch に固まり、負例が同 sample 内だけのため)。`acc`・`chance` も記録。
 - 学習は wandb (`--wandb_project`)。`--vis_every` step ごとに floorplan 上の対応点 (GT 緑 / 予測 橙)・現在位置 (GT 青 / 推定 赤) と現在フレーム RGB を hstack して保存・ログ。
 
 構成
-- `train/lamar/`: `lamar.py` (CAPTURE 読込, affine, 壁判定, フィルタ, 窓, LiDAR), `reconstruction.py` (MapAnything), `prepare_lamar.py`, `evaluate_lamar.py`, `visualize_correspondences.py` (RGB と floorplan の対応点を 7 色で描画), `split.yaml`, `tests/`
+- `train/lamar/`: `lamar.py` (CAPTURE 読込, affine, 壁判定, フィルタ, 窓, LiDAR), `reconstruction.py` (MapAnything), `prepare_lamar.py`, `evaluate_lamar.py`, `visualize_correspondences.py` (RGB・density・floorplan の対応点を 7 色で描画), `split.yaml`, `tests/`
 - `shells/lamar/`: `download_lamar.sh`, `prepare.sh` (+`_hf`/`_hg`), `evaluate.sh` (+`_hf`/`_hg`)。`shells/train/`: `train.sh`, `lamar_hf.sh`, `lamar_hg.sh`
 - 既存の変更: `train.py` (wandb, 可視化), `scenealigner/training.py` (任意列 `rgb`/`camera_plan`/`camera_density`), `scenealigner/visualization.py`, `scenealigner/inference.py` (解像度を floorplan から取得。512 では不変)
 

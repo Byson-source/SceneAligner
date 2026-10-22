@@ -90,8 +90,9 @@ so `scene_id` is `hge` for all of them (only the points of a sample are its nega
 loss); `--scene_id cell` names 20 m cells instead, so that windows of different cells are negatives of each other.
 
 To look at the correspondences, `visualize_correspondences.py` draws, for random windows of the cache (or
-`--windows <name>`), the pixels of a frame whose points lie on walls next to their points on hge.png (cropped
-around them, the camera in blue), in seven colours from the left (red) to the right (violet) of the photo. It reads
+`--windows <name>`), the pixels of a frame whose points lie on walls, these points on a density map (`--conf`,
+`--xz`) and on hge.png (cropped around them, the camera in blue), in seven colours from the left (red) to the right
+(violet) of the photo. It reads
 `recon_cache` and needs no GPU:
 
 ```bash
@@ -103,13 +104,21 @@ python train/lamar/visualize_correspondences.py --map_dir <LAMAR_ROOT>/HGE/sessi
 
 ```bash
 python train.py --data <data> --output <run> --epochs 2 --resolutions 1024 1280 --min_points 1000 \
-    --wandb_project scenealigner-lamar --wandb_name <run>
+    --negatives batch --plan_grid 8 --wandb_project scenealigner-lamar --wandb_name <run>
 ```
 
 Every 100 steps the losses go to `log.csv` and wandb; every `--vis_every` 500 steps, `<run>/vis/<step>.png` and
 the wandb panel `sample` show the floorplan of the first sample of the batch with the ground-truth (green) and
 predicted (orange) correspondences, the ground-truth (blue) and estimated (red) position of the last camera, next
 to its photo. `--min_points 1000` keeps the random crops (a sample has 200 to 20000 correspondences).
+
+The points of a window lie in a few patches of the building plan (1 patch = 2.8 m at 1024 px), so their floorplan
+descriptors are almost equal and, with only the points of the sample as negatives, the feature matching loss stays
+at its chance level log(1024) whatever the model (first run). `shells/train/train.sh` therefore passes
+`--negatives batch` (the points of the other windows of the batch are negatives as well) and `--plan_grid 8` (one
+correspondence per 8 px cell of the floorplan, the free slots being random negatives over the whole plan). `acc`
+(valid points whose most similar plan patch is within one patch of the ground truth) and `chance` (the loss of
+uniform descriptors) are logged with the losses.
 
 ## Evaluation
 
@@ -139,7 +148,7 @@ qsub shells/train/lamar_hg.sh                                              # tra
 qsub -v CHECKPOINT=outputs/lamar_lamar_hge_rt_HG shells/lamar/evaluate_hg.sh  # val, then test
 ```
 
-`REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
+`REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
 `qsub -v`, e.g. `qsub -v DATA=data/lamar_hge,EPOCHS=4 shells/train/lamar_hf.sh`.
 
 ## Resolution
