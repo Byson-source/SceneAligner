@@ -9,8 +9,7 @@ and one sample of its LiDAR depth maps, as prepare_s3d.py makes one of the groun
 
 Windows: 15 to 100 frames, consecutive or every 2nd or 4th frame (C3 reconstructs unordered photo collections).
 Correspondences, as prepare_s3d.py: the pixels of the density map of the 3D points whose positions lie on walls of
-the floorplan (within --max_wall_dist 0.5 m of a wall pixel of hge.png: the affine transform is accurate to about
-0.25 m), and the floorplan pixels of these positions. With --plan_source recon (default) the positions are those
+the floorplan (within --max_wall_dist 0.2 m of a wall pixel of hge.png), and the floorplan pixels of these positions. With --plan_source recon (default) the positions are those
 of the reconstructed points placed with the ground-truth pose of the first camera; with --plan_source lidar,
 those of the LiDAR points (prepare_s3d.py takes the ground-truth depth). The CSV rows also hold the photo and the
 position of the last camera, for the visualizations of train.py.
@@ -44,7 +43,7 @@ DENSITY_SIZE = 512  # of the density maps, as for C3 (the floorplan is larger: t
 MIN_VIEW_CORRESPONDENCES = 8  # per frame, prepare_c3.generate
 MIN_DEPTH_CORRESPONDENCES = 10  # per depth sample, prepare_s3d.MIN_CORRESPONDENCES
 RANSAC_THRESHOLD = 10.0  # px of a 512 px floorplan (prepare_c3.is_consistent)
-MAX_WALL_DIST_M = 0.5  # correspondences: points within this distance of a wall of hge.png
+MAX_WALL_DIST_M = 0.2  # correspondences: points within this distance of a wall of hge.png
 SOURCES = ("mapanything", "lidar")  # sample folders and CSV files lamar_<source>.csv
 CSV_COLUMNS = ["scene_id", "density", "floorplan", "correspondences", "rgb", "camera_plan", "camera_density"]
 

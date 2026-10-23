@@ -30,7 +30,7 @@
   - 窓: 長さ 15/20/35/50/100 × フレーム間隔 1/2/4 (C3 の写真集合に倣い広く)。名前・cache は `<session>_t<先頭 ts>_L<len>_k<step>`。学習フレームは UnLoc の室内区間 + plan 内のみ。
   - MapAnything sample: C3 と同じ conf 30/45/60/75/90 × xz 0/2.5/5 × gamma 4 種、フレームごと 8 点以上、RANSAC 一貫性 (10 px/512)。
   - LiDAR sample: S3D の GT depth sample と同じ (高さ 20〜95 %, xz 2.5 %, gamma 0.5, 10 点以上, 一貫性なし)。
-  - 対応点: S3D と同じく壁上の点のみ。許容幅は hge.png の壁から 0.5 m (affine 誤差 0.25 m。0.2 m は遠い壁が消えた)。
+  - 対応点: S3D と同じく壁上の点のみ。許容幅は hge.png の壁から 0.2 m (0.5 m は緩すぎるとしてユーザー判断で戻した。遠い壁の点は減る)。
   - 学習: S3D の `--epochs 20 --min_points 1000`、解像度は plan と同じ単一 1024。density map は学習・評価とも 512。
 - floorplan (`hge.png` 3278×2334, 再配布不可) は `--plan_size 1024` に縮小して入力 (原寸は ViT の token 数で不可、512 は 1 m = 2.9 px で粗い)。
 - upstream に無い追加は `--negatives batch --plan_grid 8` と plan の壁を 0.5 m に太らせる処理のみ (ユーザー承認済み)。negatives/plan_grid は、初回 run が feat が chance = ln 1024 に張り付いた: 窓の点が plan 上の数 patch に固まり、負例が同 sample 内だけだったため。`acc`・`chance` も記録。`<run>/state.pt` から epoch 単位で再開。

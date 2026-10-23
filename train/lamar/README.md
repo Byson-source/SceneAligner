@@ -14,14 +14,14 @@ removed from this fork) where correspondences come from ground-truth geometry in
 | gravity | GeoCalib | GeoCalib | ground-truth pose (z-up world) |
 | reconstruction samples | conf 30/45/60/75/90 x x/z 0/2.5/5 x gamma 0.25/0.5/0.75/1 | conf 45, x/z 2.5, gamma 0.5 | as C3 |
 | ground-truth geometry samples | - | density map of the ground-truth depth | density map of the LiDAR depth maps |
-| correspondences | annotated | ground-truth points on walls (dark pixels of the 512 px plan) | points within 0.5 m of a wall of hge.png |
+| correspondences | annotated | ground-truth points on walls (dark pixels of the 512 px plan) | points within 0.2 m of a wall of hge.png |
 | minimum correspondences | 8 per photo | 10 per sample | 8 per frame, 10 per LiDAR sample |
 | consistency test | RANSAC similarity, 10 px of 512 | - | as C3 (reconstruction samples) |
 | floorplan | 512 px | 512 px | 1024 px, walls thickened to 0.5 m (1-3 px lines in hge.png) |
 | `train.py` | defaults | `--epochs 20 --resolutions 512 --min_points 1000` | `--epochs 20 --resolutions 1024 --min_points 1000 --negatives batch --plan_grid 8` |
 
-The 0.5 m wall tolerance covers the error of the affine transform (about 0.25 m); a first version with 0.2 m lost
-most far walls. `--negatives batch` and `--plan_grid 8` are the only additions to the training of SceneAligner (see
+The 0.2 m wall tolerance is strict: with the error of the affine transform (about 0.25 m) and of the reconstruction,
+far walls lose many points (0.5 m kept them but was found too loose; `--max_wall_dist` changes it). `--negatives batch` and `--plan_grid 8` are the only additions to the training of SceneAligner (see
 Training). `train.py` also logs to Weights & Biases (`--wandb_project`), saves a visualization every
 `--vis_every` steps and resumes after the last completed epoch.
 
