@@ -8,6 +8,11 @@ sample of the batch: the floorplan with the ground-truth and predicted correspon
 camera (ground truth and estimated from the predicted correspondences), next to the photo of that camera (data
 with the camera_plan, camera_density and rgb columns, see train/lamar/prepare_lamar.py). The images are also saved
 to <run>/vis/.
+
+With torchrun (shells/train/train.sh), one process per GPU of the node (DistributedDataParallel): each GPU takes a
+batch of 4 samples, and the points of the batches of all GPUs are the candidates of the feature matching loss.
+
+    torchrun --standalone --nproc_per_node=8 train.py --data <data> --output <run> ...
 """
 import argparse
 import csv
@@ -17,18 +22,63 @@ from functools import partial
 
 import numpy as np
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from peft import LoraConfig, get_peft_model, load_peft_weights, set_peft_model_state_dict
 from PIL import Image
-from torch.utils.data import DataLoader
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
 
 from scenealigner.inference import SOFT_ARGMAX_TEMPERATURE, load_model, sample_descriptors
-from scenealigner.training import (DensityFloorplanDataset, collate, denormalize, feature_matching_loss, geometry_loss,
-                                   regression_loss, topology_loss)
+from scenealigner.training import (DensityFloorplanDataset, collate, denormalize, distributed_feature_matching_loss,
+                                   feature_matching_loss, geometry_loss, regression_loss, topology_loss)
 from scenealigner.visualization import draw_training_sample, estimate_camera_on_plan
 
 LAMBDA_REGR, LAMBDA_TOPO, LAMBDA_GEO = 50.0, 10.0, 10.0  # the weight of the feature matching loss is 1
+
+
+class FeatureExtractor(torch.nn.Module):
+    """Patch features (B, C, S / 16, S / 16) of images (B, 3, S, S): the forward wrapped by DistributedDataParallel."""
+
+    def __init__(self, model):
+        super().__init__()
+        self.model = model
+
+    def forward(self, img):
+        tokens = self.model.forward_features(img)["x_norm_patchtokens"]
+        grid_dim = img.shape[-1] // 16
+        return tokens.permute(0, 2, 1).reshape(len(img), -1, grid_dim, grid_dim)
+
+
+def world():
+    """Rank of this process and number of processes (0, 1 without torchrun)."""
+    return (dist.get_rank(), dist.get_world_size()) if dist.is_initialized() else (0, 1)
+
+
+def same_scene_mask(scene_ids, negatives):
+    """same_scene (B, W * B) of feature_matching_loss: pairs of a local sample and another sample of the batches of
+    all GPUs (rank-major) of one scene, whose points are not negatives (none with negatives="batch")."""
+    rank, num_gpus = world()
+    B = len(scene_ids)
+    mask = np.zeros((B, num_gpus * B), dtype=bool)
+    if negatives == "scene":
+        all_ids = [scene_ids]
+        if num_gpus > 1:
+            all_ids = [None] * num_gpus
+            dist.all_gather_object(all_ids, list(scene_ids))
+        mask = np.array(scene_ids)[:, None] == np.concatenate(all_ids)[None]
+        mask[np.arange(B), rank * B + np.arange(B)] = False
+    return torch.tensor(mask).cuda()
+
+
+def mean_over_gpus(values):
+    """Mean over the GPUs of scalar tensors {name: tensor} (the same names on every GPU), for the logs."""
+    if not dist.is_initialized():
+        return values
+    stacked = torch.stack([v.detach().float().cuda() for v in values.values()])
+    dist.all_reduce(stacked)
+    return dict(zip(values, stacked / dist.get_world_size()))
 
 
 def ramp(step, start, duration):
@@ -44,23 +94,20 @@ def compute_loss(model, batch, step, total_steps, negatives="scene"):
     """Loss of a batch at a training step, its terms, the weights of the curriculum and diagnostics, and the
     predicted floorplan coordinates (B, N, 2) in [0, 1] of the density-map points.
 
+    model: FeatureExtractor, wrapped by DistributedDataParallel under torchrun (the points of all GPUs are negatives).
+
     negatives: "scene" (the points of other samples of the same scene are not negatives) or "batch" (all points of
     the batch are negatives, e.g. windows at different places of one building)."""
     density_img, plan_img = batch["density_img"].cuda(), batch["plan_img"].cuda()
     pts_density, pts_plan, valid = batch["density_pts"].cuda(), batch["plan_pts"].cuda(), batch["valid"].cuda()
-    scene_ids = np.array(batch["scene_id"])
-    same_scene = torch.tensor((scene_ids[:, None] == scene_ids[None]) & ~np.eye(len(scene_ids), dtype=bool)).cuda()
-    if negatives == "batch":
-        same_scene.zero_()
+    same_scene = same_scene_mask(batch["scene_id"], negatives)
 
-    feature_maps = []
-    for img in (density_img, plan_img):
-        tokens = model.forward_features(img)["x_norm_patchtokens"]
-        grid_dim = img.shape[-1] // 16
-        feature_maps.append(tokens.permute(0, 2, 1).reshape(len(img), -1, grid_dim, grid_dim))
-    map_density, map_plan = feature_maps
+    # One forward for both images (same resolution, see collate), as DistributedDataParallel expects
+    map_density, map_plan = model(torch.cat([density_img, plan_img])).chunk(2)
+    grid_dim = map_plan.shape[-1]
     desc_density = sample_descriptors(map_density, pts_density)
-    losses = {"feat": feature_matching_loss(desc_density, sample_descriptors(map_plan, pts_plan), same_scene, valid)}
+    matching_loss = distributed_feature_matching_loss if dist.is_initialized() else feature_matching_loss
+    losses = {"feat": matching_loss(desc_density, sample_descriptors(map_plan, pts_plan), same_scene, valid)}
     loss = losses["feat"]
 
     # Predicted floorplan coordinates in [0, 1]: soft-argmax over the patch centers
@@ -129,58 +176,82 @@ def main():
     parser.add_argument("--wandb_name", default=None, help="name of the wandb run")
     parser.add_argument("--vis_every", type=int, default=500, help="steps between two visualizations (0: none)")
     args = parser.parse_args()
+    if "LOCAL_RANK" in os.environ:  # torchrun
+        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+        dist.init_process_group("nccl")
+    rank, num_gpus = world()
     wandb = None
-    if args.wandb_project:
+    if args.wandb_project and rank == 0:
         import wandb  # optional dependency
 
         wandb.init(project=args.wandb_project, name=args.wandb_name, config=vars(args))
 
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+    random.seed(args.seed + rank)  # different augmentations and dropout on each GPU
+    np.random.seed(args.seed + rank)
+    torch.manual_seed(args.seed + rank)
     image_size = args.resolutions[0] if len(args.resolutions) == 1 else None
     dataset = DensityFloorplanDataset(args.data, min_points=args.min_points, image_size=image_size, plan_grid=args.plan_grid)
-    loader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=4, collate_fn=partial(collate, resolutions=args.resolutions))
+    sampler = DistributedSampler(dataset, seed=args.seed) if num_gpus > 1 else None  # same number of batches on every GPU
+    loader = DataLoader(dataset, batch_size=4, shuffle=sampler is None, sampler=sampler, num_workers=4,
+                        collate_fn=partial(collate, resolutions=args.resolutions))
     total_steps = len(loader) * args.epochs
 
     lora = LoraConfig(r=16, lora_alpha=16, lora_dropout=0.1, target_modules=["qkv", "proj", "fc1", "fc2"])
+    if rank:  # the first process downloads the DINOv3 weights
+        dist.barrier()
     model = get_peft_model(load_model("pre-trained", args.dinov3_weights), lora)
+    if rank == 0 and num_gpus > 1:
+        dist.barrier()
     model.train()
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-4)
 
-    os.makedirs(os.path.join(args.output, "vis"), exist_ok=True)
+    if rank == 0:
+        os.makedirs(os.path.join(args.output, "vis"), exist_ok=True)
     # Resume after the last completed epoch (LoRA layers, optimizer, step), e.g. when a job reaches its walltime
     state_path = os.path.join(args.output, "state.pt")
     first_epoch, step = 0, 0
     if os.path.exists(state_path):
-        state = torch.load(state_path, weights_only=True)
+        state = torch.load(state_path, map_location="cpu", weights_only=True)
         set_peft_model_state_dict(model, load_peft_weights(args.output))
         optimizer.load_state_dict(state["optimizer"])
         first_epoch, step = state["epoch"] + 1, state["step"]
-        print(f"resumed after epoch {first_epoch} (step {step})")
+        if rank == 0:
+            print(f"resumed after epoch {first_epoch} (step {step})")
+    extractor = FeatureExtractor(model)
+    if num_gpus > 1:
+        extractor = DistributedDataParallel(extractor, device_ids=[torch.cuda.current_device()])
     columns = ("feat", "regr", "geo", "topo", "acc", "chance")
-    log = csv.writer(open(os.path.join(args.output, "log.csv"), "a" if first_epoch else "w", buffering=1))
-    if not first_epoch:
-        log.writerow(["step", "loss", *columns])
+    if rank == 0:
+        log = csv.writer(open(os.path.join(args.output, "log.csv"), "a" if first_epoch else "w", buffering=1))
+        if not first_epoch:
+            log.writerow(["step", "loss", *columns])
     for epoch in range(first_epoch, args.epochs):
-        for batch in tqdm(loader, desc=f"epoch {epoch + 1}/{args.epochs}"):
+        if sampler is not None:
+            sampler.set_epoch(epoch)
+        for batch in tqdm(loader, desc=f"epoch {epoch + 1}/{args.epochs}", disable=rank != 0):
             optimizer.zero_grad()
-            loss, losses, pred = compute_loss(model, batch, step, total_steps, args.negatives)
+            loss, losses, pred = compute_loss(extractor, batch, step, total_steps, args.negatives)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             step += 1
             if step % 100 == 0:
-                log.writerow([step, loss.item()] + [losses[k].item() if k in losses else "" for k in columns])
-                if wandb:
-                    wandb.log({"loss": loss.item(), "epoch": epoch, **{k: v.item() for k, v in losses.items()}}, step=step)
-            if args.vis_every and step % args.vis_every == 0:
+                logged = mean_over_gpus({"loss": loss, **losses})
+                if rank == 0:
+                    log.writerow([step, logged["loss"].item()] + [logged[k].item() if k in logged else "" for k in columns])
+                    if wandb:
+                        wandb.log({"epoch": epoch, **{k: v.item() for k, v in logged.items()}}, step=step)
+            if args.vis_every and step % args.vis_every == 0 and rank == 0:
                 image = visualize(batch, pred)
                 Image.fromarray(image).save(os.path.join(args.output, "vis", f"{step:06d}.png"))
                 if wandb:
                     wandb.log({"sample": wandb.Image(image, caption=f"step {step}: {batch['scene_id'][0]}")}, step=step)
-        model.save_pretrained(args.output)
-        torch.save({"epoch": epoch, "step": step, "optimizer": optimizer.state_dict()}, state_path)
+        if rank == 0:
+            model.save_pretrained(args.output)
+            torch.save({"epoch": epoch, "step": step, "optimizer": optimizer.state_dict()}, state_path)
+    if num_gpus > 1:
+        dist.barrier()  # the first process saves the last epoch
+        dist.destroy_process_group()
 
 
 if __name__ == "__main__":

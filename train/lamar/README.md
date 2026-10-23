@@ -164,7 +164,9 @@ qsub -v CHECKPOINT=outputs/lamar_lamar_hge_rt_HG shells/lamar/evaluate_hg.sh  # 
 `prepare.sh` and `evaluate.sh` run one process per GPU of the node (`--shard i --num_shards n`, round robin over
 the windows; logs in `$DATA/shards/prepare_<i>.log` and `$OUT/<val|test>_results.shard<i>.log`), then merge their
 outputs (`--merge`; the seeds of the alignment depend on the window, not on the shard): `_hf` uses all the GPUs of
-a node, `_hg` one. `train.py` uses one GPU.
+a node, `_hg` one. `train.sh` runs `train.py` with `torchrun` on all the GPUs of the node (DistributedDataParallel,
+a batch of 4 windows per GPU: 32 on rt_HF, lr unchanged); the points of the batches of all GPUs are the candidates
+of the feature matching loss (all_gather), and the logs are the mean over the GPUs.
 
 `REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `NUM_GPUS`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
 `qsub -v`, e.g. `qsub -v DATA=data/lamar_hge,EPOCHS=4 shells/train/lamar_hf.sh`. The cached reconstructions of an

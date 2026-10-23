@@ -158,6 +158,27 @@ def feature_matching_loss(feat_a, feat_b, same_scene, valid, temperature=0.07):
     return (F.cross_entropy(logits[idx], idx) + F.cross_entropy(logits.T[idx], idx)) / 2
 
 
+def distributed_feature_matching_loss(feat_a, feat_b, same_scene, valid, temperature=0.07):
+    """feature_matching_loss over the points of the samples of all GPUs (DistributedDataParallel): the local points
+    are the queries, the points of every GPU (all_gather, with gradients) the candidates. feat_a, feat_b: (B, N, C).
+
+    same_scene (B, W * B): pairs of a local sample and a sample of the global batch (rank-major) of one scene, other
+    than itself, whose points are not used as negatives. The gradients averaged by DDP are those of the mean loss.
+    """
+    import torch.distributed as dist
+    import torch.distributed.nn.functional as dist_nn
+
+    B, N, C = feat_a.shape
+    a, b = F.normalize(feat_a, dim=-1).reshape(B * N, C), F.normalize(feat_b, dim=-1).reshape(B * N, C)
+    all_a, all_b = torch.cat(dist_nn.all_gather(a)), torch.cat(dist_nn.all_gather(b))
+    mask = same_scene[:, None, :, None].expand(B, N, same_scene.shape[1], N).reshape(B * N, -1)
+    logits_ab = (a @ all_b.T / temperature).masked_fill(mask, float("-inf"))  # density -> floorplan points
+    logits_ba = (b @ all_a.T / temperature).masked_fill(mask, float("-inf"))  # floorplan -> density points
+    idx = torch.nonzero(valid.reshape(B * N)).squeeze(1)
+    target = idx + dist.get_rank() * B * N  # the same point in the global batch
+    return (F.cross_entropy(logits_ab[idx], target) + F.cross_entropy(logits_ba[idx], target)) / 2
+
+
 def regression_loss(pred, gt, weights, delta=0.02):
     """Confidence-weighted Huber loss on the predicted floorplan coordinates (Eq. 3)."""
     dist = torch.norm(pred - gt, p=2, dim=-1)

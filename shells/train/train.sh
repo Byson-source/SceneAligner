@@ -10,6 +10,7 @@
 # Called by lamar_hf.sh / lamar_hg.sh with DATA and RTYPE; can be submitted alone: qsub -v DATA=<data> shells/train/train.sh
 # Hyperparameters of the Structured3D training of SceneAligner (--epochs 20 --min_points 1000, one resolution: that of
 # the floorplan, 1024 here). Resubmit the same command to resume after the last completed epoch (RUN/state.pt).
+# One process per GPU of the node (torchrun, DistributedDataParallel; rt_HF: 8, rt_HG: 1), a batch of 4 per GPU.
 
 source /etc/profile.d/modules.sh
 export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner
@@ -26,7 +27,9 @@ EPOCHS="${EPOCHS:-20}"
 WANDB_PROJECT="${WANDB_PROJECT:-scenealigner-lamar}"
 NEGATIVES="${NEGATIVES:-batch}"  # the other windows of the batch are negatives (all windows share the floorplan)
 PLAN_GRID="${PLAN_GRID:-8}"      # one correspondence per 8 px (1.4 m) of the 1024 px floorplan
+NUM_GPUS="${NUM_GPUS:-$(nvidia-smi -L | wc -l)}"
 
-python train.py --data "$DATA" --output "$RUN" --epochs "$EPOCHS" --resolutions 1024 --min_points 1000 \
+torchrun --standalone --nproc_per_node="$NUM_GPUS" train.py --data "$DATA" --output "$RUN" --epochs "$EPOCHS" \
+    --resolutions 1024 --min_points 1000 \
     --negatives "$NEGATIVES" --plan_grid "$PLAN_GRID" \
     --wandb_project "$WANDB_PROJECT" --wandb_name "$(basename "$RUN")"
