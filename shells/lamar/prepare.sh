@@ -6,7 +6,8 @@
 #PBS -v RTYPE=rt_HG
 #PBS -m abe
 #PBS -k oed
-# LaMAR HGE training data: data check, then MapAnything reconstructions and density maps of the train windows.
+# LaMAR HGE training data: data check, then MapAnything reconstructions and density maps of the train windows
+# ($DATA) and of the val windows ($DATA/val, validation of train.py).
 # Called by prepare_hf.sh / prepare_hg.sh with DATA and RTYPE. NUM_GPUS: processes (default: the GPUs of the node).
 
 source /etc/profile.d/modules.sh
@@ -29,20 +30,26 @@ python -c "import sys; print('python:', sys.executable, sys.version.split()[0])"
 
 python train/lamar/lamar.py --check --map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" --floorplan "$FLOORPLAN" --plan_size "$PLAN_SIZE"
 
-# One process per GPU (rt_HF: all GPUs of the node, rt_HG: one), each with a share of the windows; logs in $DATA/shards
+# One process per GPU (rt_HF: all GPUs of the node, rt_HG: one), each with a share of the windows; logs in <output>/shards
 NUM_GPUS="${NUM_GPUS:-$(nvidia-smi -L | wc -l)}"
-mkdir -p "$DATA/shards" && rm -f "$DATA"/shards/lamar_*.csv
+SPLITS="${SPLITS:-train val}"  # train -> $DATA, val -> $DATA/val (validation of train.py); e.g. qsub -v SPLITS=val
 echo "$NUM_GPUS GPUs"
-pids=()
-for ((i = 0; i < NUM_GPUS; i++)); do
-    CUDA_VISIBLE_DEVICES=$i python train/lamar/prepare_lamar.py --map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" \
-        --floorplan "$FLOORPLAN" --output "$DATA" --plan_size "$PLAN_SIZE" --recon_cache "$DATA/recon_cache" \
-        --shard "$i" --num_shards "$NUM_GPUS" > "$DATA/shards/prepare_$i.log" 2>&1 &
-    pids+=($!)
+prepare() {  # prepare <output> <split>
+    local output="$1" split="$2" pids=()
+    mkdir -p "$output/shards" && rm -f "$output"/shards/lamar_*.csv
+    for ((i = 0; i < NUM_GPUS; i++)); do
+        CUDA_VISIBLE_DEVICES=$i python train/lamar/prepare_lamar.py --map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" \
+            --floorplan "$FLOORPLAN" --output "$output" --plan_size "$PLAN_SIZE" --recon_cache "$DATA/recon_cache" \
+            --sessions "$split" --shard "$i" --num_shards "$NUM_GPUS" > "$output/shards/prepare_$i.log" 2>&1 &
+        pids+=($!)
+    done
+    for i in "${!pids[@]}"; do
+        wait "${pids[$i]}" || { echo "shard $i failed: see $output/shards/prepare_$i.log"; exit 1; }
+    done
+    if ((NUM_GPUS > 1)); then  # one process writes the CSV files itself
+        python train/lamar/prepare_lamar.py --merge --output "$output"
+    fi
+}
+for split in $SPLITS; do
+    prepare "$DATA$([[ $split == train ]] || echo "/$split")" "$split"
 done
-for i in "${!pids[@]}"; do
-    wait "${pids[$i]}" || { echo "shard $i failed: see $DATA/shards/prepare_$i.log"; exit 1; }
-done
-if ((NUM_GPUS > 1)); then  # one process writes the CSV files itself
-    python train/lamar/prepare_lamar.py --merge --output "$DATA"
-fi

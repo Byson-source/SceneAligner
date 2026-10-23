@@ -7,7 +7,8 @@ With --wandb_project, the losses are logged to Weights & Biases, and every --vis
 sample of the batch: the floorplan with the ground-truth and predicted correspondences and the position of the last
 camera (ground truth and estimated from the predicted correspondences), next to the photo of that camera (data
 with the camera_plan, camera_density and rgb columns, see train/lamar/prepare_lamar.py). The images are also saved
-to <run>/vis/.
+to <run>/vis/. With --val_data, the losses and diagnostics on the val data are logged after every epoch (val/ on
+wandb, <run>/val_log.csv).
 
 With torchrun (shells/train/train.sh), one process per GPU of the node (DistributedDataParallel): each GPU takes a
 batch of 4 samples, and the points of the batches of all GPUs are the candidates of the feature matching loss.
@@ -143,6 +144,24 @@ def compute_loss(model, batch, step, total_steps, negatives="scene"):
     return loss, losses, pred
 
 
+def validate(model, extractor, dataset, args, step, total_steps):
+    """Mean losses and diagnostics of compute_loss on the val data, averaged over the GPUs. The augmentations of the
+    data loader are seeded by --seed: the same at every epoch."""
+    rank, num_gpus = world()
+    sampler = DistributedSampler(dataset, shuffle=False) if num_gpus > 1 else None
+    loader = DataLoader(dataset, batch_size=4, sampler=sampler, num_workers=4, generator=torch.Generator().manual_seed(args.seed),
+                        collate_fn=partial(collate, resolutions=args.resolutions))
+    totals = {}
+    model.eval()
+    with torch.no_grad():
+        for batch in tqdm(loader, desc="val", disable=rank != 0):
+            loss, losses, _ = compute_loss(extractor, batch, step, total_steps, args.negatives)
+            for k, v in {"loss": loss, **losses}.items():
+                totals[k] = totals.get(k, 0) + v.float()
+    model.train()
+    return mean_over_gpus({k: v / len(loader) for k, v in totals.items()})
+
+
 def visualize(batch, pred, ransac_thr=0.04):
     """Image of the first sample of a batch (draw_training_sample), with the camera estimated from the predicted
     correspondences by a similarity transform (RANSAC, as at inference)."""
@@ -174,6 +193,7 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--wandb_project", default=None, help="logs the losses and the visualizations to Weights & Biases")
     parser.add_argument("--wandb_name", default=None, help="name of the wandb run")
+    parser.add_argument("--val_data", default=None, help="val data (prepare_lamar.py --sessions val), evaluated after every epoch")
     parser.add_argument("--vis_every", type=int, default=500, help="steps between two visualizations (0: none)")
     args = parser.parse_args()
     if "LOCAL_RANK" in os.environ:  # torchrun
@@ -195,6 +215,8 @@ def main():
     loader = DataLoader(dataset, batch_size=4, shuffle=sampler is None, sampler=sampler, num_workers=4,
                         collate_fn=partial(collate, resolutions=args.resolutions))
     total_steps = len(loader) * args.epochs
+    val_dataset = DensityFloorplanDataset(args.val_data, min_points=args.min_points, image_size=image_size,
+                                          plan_grid=args.plan_grid) if args.val_data else None
 
     lora = LoraConfig(r=16, lora_alpha=16, lora_dropout=0.1, target_modules=["qkv", "proj", "fc1", "fc2"])
     if rank:  # the first process downloads the DINOv3 weights
@@ -249,6 +271,18 @@ def main():
         if rank == 0:
             model.save_pretrained(args.output)
             torch.save({"epoch": epoch, "step": step, "optimizer": optimizer.state_dict()}, state_path)
+        if val_dataset is not None:
+            val = validate(model, extractor, val_dataset, args, step, total_steps)
+            if rank == 0:
+                val_path = os.path.join(args.output, "val_log.csv")
+                new = not os.path.exists(val_path)
+                with open(val_path, "a") as f:
+                    if new:
+                        csv.writer(f).writerow(["epoch", "step", "loss", *columns])
+                    csv.writer(f).writerow([epoch, step, val["loss"].item()] + [val[k].item() if k in val else "" for k in columns])
+                print(f"val after epoch {epoch + 1}: " + ", ".join(f"{k} {v.item():.4f}" for k, v in val.items()))
+                if wandb:
+                    wandb.log({f"val/{k}": v.item() for k, v in val.items()}, step=step)
     if num_gpus > 1:
         dist.barrier()  # the first process saves the last epoch
         dist.destroy_process_group()

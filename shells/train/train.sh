@@ -28,8 +28,11 @@ WANDB_PROJECT="${WANDB_PROJECT:-scenealigner-lamar}"
 NEGATIVES="${NEGATIVES:-batch}"  # the other windows of the batch are negatives (all windows share the floorplan)
 PLAN_GRID="${PLAN_GRID:-8}"      # one correspondence per 8 px (1.4 m) of the 1024 px floorplan
 NUM_GPUS="${NUM_GPUS:-$(nvidia-smi -L | wc -l)}"
+VAL_DATA="${VAL_DATA:-$DATA/val}"  # val windows (prepare.sh), evaluated after every epoch if they exist
+val_args=()
+if [[ -f "$VAL_DATA/lamar_mapanything.csv" ]]; then val_args=(--val_data "$VAL_DATA"); fi
 
 torchrun --standalone --nproc_per_node="$NUM_GPUS" train.py --data "$DATA" --output "$RUN" --epochs "$EPOCHS" \
     --resolutions 1024 --min_points 1000 \
-    --negatives "$NEGATIVES" --plan_grid "$PLAN_GRID" \
+    --negatives "$NEGATIVES" --plan_grid "$PLAN_GRID" "${val_args[@]}" \
     --wandb_project "$WANDB_PROJECT" --wandb_name "$(basename "$RUN")"

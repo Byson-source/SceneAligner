@@ -168,7 +168,12 @@ a node, `_hg` one. `train.sh` runs `train.py` with `torchrun` on all the GPUs of
 a batch of 4 windows per GPU: 32 on rt_HF, lr unchanged); the points of the batches of all GPUs are the candidates
 of the feature matching loss (all_gather), and the logs are the mean over the GPUs.
 
-`REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `NUM_GPUS`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
+`prepare.sh` also makes the windows of the val session in `$DATA/val` (`SPLITS`, default `train val`; only the
+val windows: `qsub -v SPLITS=val shells/lamar/prepare_hf.sh`). When they exist, `train.sh` passes them to
+`train.py --val_data`, which computes the losses, `acc` and `chance` on them after every epoch (the same
+augmentations at every epoch, seeded by `--seed`) and logs them to wandb (`val/...`) and `<run>/val_log.csv`.
+
+`REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `NUM_GPUS`, `SPLITS`, `VAL_DATA`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
 `qsub -v`, e.g. `qsub -v DATA=data/lamar_hge,EPOCHS=4 shells/train/lamar_hf.sh`. The cached reconstructions of an
 older version (`<session>_s<start>_L<length>.npz`, indexed by the frames of other filters) are not used and can be deleted.
 

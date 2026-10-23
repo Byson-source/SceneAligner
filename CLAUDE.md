@@ -38,7 +38,7 @@
 
 構成
 - `train/lamar/`: `lamar.py` (CAPTURE 読込, affine, 壁判定, フィルタ, 窓, LiDAR), `reconstruction.py` (MapAnything), `prepare_lamar.py`, `evaluate_lamar.py`, `visualize_correspondences.py` (RGB・density・floorplan の対応点を 7 色で描画), `split.yaml`, `tests/`
-- `shells/lamar/`: `download_lamar.sh`, `prepare.sh` (+`_hf`/`_hg`。GPU ごとに 1 プロセス `--shard`、最後に `--merge`。HF は全 GPU を使う), `evaluate.sh` (+`_hf`/`_hg`。prepare と同じく GPU ごとに分割し `--merge`。seed は窓 index で決まり分割に依らない)。train は torchrun + DDP でノードの全 GPU (rt_HF 8 枚、GPU あたり batch 4 = 計 32、lr 1e-4 据え置き、feat の負例は全 GPU の点を all_gather)。`shells/train/`: `train.sh`, `lamar_hf.sh`, `lamar_hg.sh`
+- `shells/lamar/`: `download_lamar.sh`, `prepare.sh` (+`_hf`/`_hg`。GPU ごとに 1 プロセス `--shard`、最後に `--merge`。HF は全 GPU を使う), `evaluate.sh` (+`_hf`/`_hg`。prepare と同じく GPU ごとに分割し `--merge`。seed は窓 index で決まり分割に依らない)。train は torchrun + DDP でノードの全 GPU (rt_HF 8 枚、GPU あたり batch 4 = 計 32、lr 1e-4 据え置き、feat の負例は全 GPU の点を all_gather)。prepare は `SPLITS` (既定 `train val`) で val session の窓も `$DATA/val` に作り、train.sh はあれば `--val_data` を渡して epoch ごとに val の loss/acc/chance を wandb `val/`・`<run>/val_log.csv` に記録 (augmentation は `--seed` で固定)。`shells/train/`: `train.sh`, `lamar_hf.sh`, `lamar_hg.sh`
 - 既存の変更: `train.py` (wandb, 可視化), `scenealigner/training.py` (任意列 `rgb`/`camera_plan`/`camera_density`), `scenealigner/visualization.py`, `scenealigner/inference.py` (解像度を floorplan から取得。512 では不変)
 
 状態
