@@ -23,7 +23,7 @@ removed from this fork) where correspondences come from ground-truth geometry in
 The 0.2 m wall tolerance is strict: with the error of the affine transform (about 0.25 m) and of the reconstruction,
 far walls lose many points (0.5 m kept them but was found too loose; `--max_wall_dist` changes it). `--negatives batch` and `--plan_grid 8` are the only additions to the training of SceneAligner (see
 Training). `train.py` also logs to Weights & Biases (`--wandb_project`), saves a visualization every
-`--vis_every` steps and resumes after the last completed epoch.
+`--vis_every` steps and, with `--resume`, resumes after the last completed epoch.
 
 ## Data
 
@@ -122,8 +122,10 @@ python train.py --data <data> --output <run> --epochs 20 --resolutions 1024 --mi
 Every 100 steps the losses go to `log.csv` and wandb; every `--vis_every` 500 steps, `<run>/vis/<step>.png` and
 the wandb panel `sample` show the floorplan of the first sample of the batch with the ground-truth (green) and
 predicted (orange) correspondences, the ground-truth (blue) and estimated (red) position of the last camera, next
-to its photo. If `<run>/state.pt` exists, the training resumes after the last completed epoch (resubmit the job
-when it reaches its walltime).
+to its photo. Every job of `train.sh` writes a new run `outputs/lamar_<data>_<RTYPE>_<YYYYmmdd_HHMMSS>`; to
+continue a run after its last completed epoch (e.g. at the walltime), `qsub -v RESUME=<run> shells/train/lamar_hf.sh`
+(`train.py --resume`: LoRA layers, optimizer, step and wandb run of `<run>/state.pt`). Without `--resume`,
+`train.py` refuses an `--output` that already has a `state.pt`.
 
 The points of a window lie in a few patches of the building plan (1 patch = 2.8 m at 1024 px), so their floorplan
 descriptors are almost equal and, with only the points of the sample as negatives, the feature matching loss stays
@@ -157,8 +159,8 @@ The jobs in `shells/` (PBS, conda environment `scenealigner`) run in `REPO`, by 
 ```bash
 qsub shells/lamar/download_lamar.sh                                        # raw sessions, HGE/sessions/map, hge.png
 qsub shells/lamar/prepare_hg.sh                                            # lamar.py --check, prepare_lamar.py -> data/lamar_hge
-qsub shells/train/lamar_hg.sh                                              # train.py -> outputs/lamar_lamar_hge_rt_HG, wandb
-qsub -v CHECKPOINT=outputs/lamar_lamar_hge_rt_HG shells/lamar/evaluate_hg.sh  # val, then test
+qsub shells/train/lamar_hg.sh                                              # train.py -> outputs/lamar_lamar_hge_rt_HG_<date>_<time>, wandb
+qsub -v CHECKPOINT=outputs/lamar_lamar_hge_rt_HG_<date>_<time> shells/lamar/evaluate_hg.sh  # val, then test
 ```
 
 `prepare.sh` and `evaluate.sh` run one process per GPU of the node (`--shard i --num_shards n`, round robin over
@@ -173,7 +175,7 @@ val windows: `qsub -v SPLITS=val shells/lamar/prepare_hf.sh`). When they exist, 
 `train.py --val_data`, which computes the losses, `acc` and `chance` on them after every epoch (the same
 augmentations at every epoch, seeded by `--seed`) and logs them to wandb (`val/...`) and `<run>/val_log.csv`.
 
-`REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `NUM_GPUS`, `SPLITS`, `VAL_DATA`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
+`REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `NUM_GPUS`, `SPLITS`, `VAL_DATA`, `RESUME`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
 `qsub -v`, e.g. `qsub -v DATA=data/lamar_hge,EPOCHS=4 shells/train/lamar_hf.sh`. The cached reconstructions of an
 older version (`<session>_s<start>_L<length>.npz`, indexed by the frames of other filters) are not used and can be deleted.
 

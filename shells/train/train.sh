@@ -9,7 +9,8 @@
 # Training of the LoRA layers on the LaMAR HGE data of prepare_lamar.py, logged to wandb.
 # Called by lamar_hf.sh / lamar_hg.sh with DATA and RTYPE; can be submitted alone: qsub -v DATA=<data> shells/train/train.sh
 # Hyperparameters of the Structured3D training of SceneAligner (--epochs 20 --min_points 1000, one resolution: that of
-# the floorplan, 1024 here). Resubmit the same command to resume after the last completed epoch (RUN/state.pt).
+# the floorplan, 1024 here). Every job writes a new run (outputs/<...>_<date>_<time>);
+# qsub -v RESUME=<run> continues <run> after its last completed epoch (<run>/state.pt).
 # One process per GPU of the node (torchrun, DistributedDataParallel; rt_HF: 8, rt_HG: 1), a batch of 4 per GPU.
 
 source /etc/profile.d/modules.sh
@@ -22,7 +23,9 @@ set -euo pipefail
 
 DATA="${DATA:-data/lamar_hge}"
 RTYPE="${RTYPE:-rt_HG}"
-RUN="${RUN:-outputs/lamar_$(basename "$DATA")_${RTYPE}}"
+RUN="${RUN:-${RESUME:-outputs/lamar_$(basename "$DATA")_${RTYPE}_$(date +%Y%m%d_%H%M%S)}}"  # a new run per job
+resume_args=()
+if [[ -n "${RESUME:-}" ]]; then resume_args=(--resume); fi  # qsub -v RESUME=<run>: continues that run
 EPOCHS="${EPOCHS:-20}"
 WANDB_PROJECT="${WANDB_PROJECT:-scenealigner-lamar}"
 NEGATIVES="${NEGATIVES:-batch}"  # the other windows of the batch are negatives (all windows share the floorplan)
@@ -34,5 +37,5 @@ if [[ -f "$VAL_DATA/lamar_mapanything.csv" ]]; then val_args=(--val_data "$VAL_D
 
 torchrun --standalone --nproc_per_node="$NUM_GPUS" train.py --data "$DATA" --output "$RUN" --epochs "$EPOCHS" \
     --resolutions 1024 --min_points 1000 \
-    --negatives "$NEGATIVES" --plan_grid "$PLAN_GRID" "${val_args[@]}" \
+    --negatives "$NEGATIVES" --plan_grid "$PLAN_GRID" "${val_args[@]}" "${resume_args[@]}" \
     --wandb_project "$WANDB_PROJECT" --wandb_name "$(basename "$RUN")"

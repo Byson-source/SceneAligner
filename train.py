@@ -194,8 +194,14 @@ def main():
     parser.add_argument("--wandb_project", default=None, help="logs the losses and the visualizations to Weights & Biases")
     parser.add_argument("--wandb_name", default=None, help="name of the wandb run")
     parser.add_argument("--val_data", default=None, help="val data (prepare_lamar.py --sessions val), evaluated after every epoch")
+    parser.add_argument("--resume", action="store_true", help="continues the run of --output after its last epoch (state.pt)")
     parser.add_argument("--vis_every", type=int, default=500, help="steps between two visualizations (0: none)")
     args = parser.parse_args()
+    # Resume after the last completed epoch (LoRA layers, optimizer, step, wandb run) only with --resume
+    state_path = os.path.join(args.output, "state.pt")
+    if os.path.exists(state_path) != args.resume:
+        parser.error(f"--resume: no {state_path}" if args.resume else f"{state_path} exists: pass --resume or another --output")
+    state = torch.load(state_path, map_location="cpu", weights_only=True) if args.resume else {}
     if "LOCAL_RANK" in os.environ:  # torchrun
         torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
         dist.init_process_group("nccl")
@@ -204,7 +210,8 @@ def main():
     if args.wandb_project and rank == 0:
         import wandb  # optional dependency
 
-        wandb.init(project=args.wandb_project, name=args.wandb_name, config=vars(args))
+        wandb.init(project=args.wandb_project, name=args.wandb_name, config=vars(args), id=state.get("wandb_id"),
+                   resume="allow")
 
     random.seed(args.seed + rank)  # different augmentations and dropout on each GPU
     np.random.seed(args.seed + rank)
@@ -229,11 +236,8 @@ def main():
 
     if rank == 0:
         os.makedirs(os.path.join(args.output, "vis"), exist_ok=True)
-    # Resume after the last completed epoch (LoRA layers, optimizer, step), e.g. when a job reaches its walltime
-    state_path = os.path.join(args.output, "state.pt")
     first_epoch, step = 0, 0
-    if os.path.exists(state_path):
-        state = torch.load(state_path, map_location="cpu", weights_only=True)
+    if state:
         set_peft_model_state_dict(model, load_peft_weights(args.output))
         optimizer.load_state_dict(state["optimizer"])
         first_epoch, step = state["epoch"] + 1, state["step"]
@@ -270,7 +274,8 @@ def main():
                     wandb.log({"sample": wandb.Image(image, caption=f"step {step}: {batch['scene_id'][0]}")}, step=step)
         if rank == 0:
             model.save_pretrained(args.output)
-            torch.save({"epoch": epoch, "step": step, "optimizer": optimizer.state_dict()}, state_path)
+            torch.save({"epoch": epoch, "step": step, "optimizer": optimizer.state_dict(),
+                        "wandb_id": wandb.run.id if wandb else None}, state_path)
         if val_dataset is not None:
             val = validate(model, extractor, val_dataset, args, step, total_steps)
             if rank == 0:
