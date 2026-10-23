@@ -63,14 +63,18 @@ def test_on_plan_keeps_all_points_inside_the_plan():
 def test_indoor_and_windows():
     timestamps = np.array([3302315254, 3302315254 + 100_000, 3302315254 + 200_000, 3373150184 + 1])  # us
     assert lamar.is_indoor(timestamps).tolist() == [True, True, True, False]
-    windows = lamar.iter_train_windows(np.arange(10) * 100_000, lengths=(4,), steps=(1,), stride_frac=0.5)
-    assert windows == [(0, 4, 1), (2, 4, 1), (4, 4, 1), (6, 4, 1)]
-    gapped = np.concatenate([np.arange(5) * 100_000, 10_000_000 + np.arange(5) * 100_000])
-    assert lamar.iter_train_windows(gapped, lengths=(4,), steps=(1,), stride_frac=0.25) == [(0, 4, 1), (1, 4, 1), (5, 4, 1), (6, 4, 1)]
-    # every 2nd frame: spans of 7 frames, starts every 4
-    assert lamar.iter_train_windows(np.arange(12) * 100_000, lengths=(4,), steps=(2,)) == [(0, 4, 2), (4, 4, 2)]
-    assert lamar.iter_train_windows(gapped, lengths=(3,), steps=(2,)) == [(0, 3, 2)]  # start 3 spans the gap
-    assert lamar.window_name("ios_x_000", 123, 20, 2) == "ios_x_000_t123_L20_k2"
+    gapped = np.concatenate([np.arange(60) * 500_000, 100_000_000 + np.arange(30) * 500_000])
+    assert lamar.train_runs(gapped) == [(0, 60), (60, 30)]
+    rng = np.random.default_rng(0)
+    windows = lamar.sample_train_windows(gapped, 20, rng, num_frames=(10, 40), max_step=4)
+    assert len(windows) == 20
+    for w in windows:
+        steps = np.diff(w)
+        assert 10 <= len(w) <= 40 and steps.min() >= 1 and steps.max() <= 4
+        assert (w[-1] < 60) or (w[0] >= 60)  # inside one run
+    assert not lamar.sample_train_windows(gapped, 5, rng, num_frames=(70, 100))  # no run is long enough
+    name = lamar.window_name("ios_x_000", np.array([123, 456]))
+    assert name.startswith("ios_x_000_t123_n2_") and name != lamar.window_name("ios_x_000", np.array([123, 457]))
     assert lamar.iter_test_windows(23, 10) == [slice(0, 10), slice(10, 20)]
 
 

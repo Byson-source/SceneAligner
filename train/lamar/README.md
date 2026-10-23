@@ -10,7 +10,7 @@ removed from this fork) where correspondences come from ground-truth geometry in
 
 | | C3 (`prepare_c3.py`) | Structured3D (`prepare_s3d.py`) | LaMAR HGE (`prepare_lamar.py`) |
 |---|---|---|---|
-| reconstruction | pi3 / VGGT, 50 to 150 photos, or one | pi3, one view | MapAnything with ground-truth intrinsics and relative poses, windows of 15 to 100 frames, every 1st, 2nd or 4th frame |
+| reconstruction | pi3 / VGGT, 50 to 150 photos, or one | pi3, one view | MapAnything with ground-truth intrinsics and relative poses, 50 random windows per session: 50 to 500 frames, random start and intervals (1 to 4 frames) |
 | gravity | GeoCalib | GeoCalib | ground-truth pose (z-up world) |
 | reconstruction samples | conf 30/45/60/75/90 x x/z 0/2.5/5 x gamma 0.25/0.5/0.75/1 | conf 45, x/z 2.5, gamma 0.5 | as C3 |
 | ground-truth geometry samples | - | density map of the ground-truth depth | density map of the LiDAR depth maps |
@@ -85,10 +85,11 @@ python train/lamar/prepare_lamar.py --map_dir <LAMAR_ROOT>/HGE/sessions/map --ra
     --floorplan <LAMAR_ROOT>/hge.png --output <data> --recon_cache <data>/recon_cache
 ```
 
-For every train session, windows of 15, 20, 35, 50 and 100 frames, taken every 1st, 2nd or 4th kept frame
-(`--steps 1 2 4`: wider views, as the photo collections of C3; starts every half span; no window across a gap of
-more than 5 s of the kept frames), are reconstructed with MapAnything and cached as
-`<session>_t<first timestamp>_L<length>_k<step>.npz`. Each window gives:
+For every train session, `--windows_per_session 50` random windows (`lamar.sample_train_windows`): a run of kept
+frames without a gap of more than 5 s, drawn proportionally to its length; 50 to 500 frames (`--num_frames`, at most
+the run); intervals drawn in 1 to 4 frames (`--max_step`; consecutive frames are about 0.5 m apart); a random start.
+They are reconstructed with MapAnything and cached as `<session>_t<first timestamp>_n<frames>_<crc32>.npz` (with the
+timestamps of the frames). The test windows stay those of Z-FLoc (15 to 100 consecutive frames). Each window gives:
 - `mapanything/`: density maps of the reconstruction for the confidence thresholds, x/z slices and gammas of
   `prepare_c3.py`, with the correspondences of the frames that have at least 8 of them, kept if they agree with a
   similarity transform. `--plan_source lidar` places the correspondences with the LiDAR points instead of the

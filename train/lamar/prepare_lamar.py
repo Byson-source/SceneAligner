@@ -7,7 +7,8 @@ and one sample of its LiDAR depth maps, as prepare_s3d.py makes one of the groun
     # on several GPUs: one process per GPU with --shard i --num_shards n (shells/lamar/prepare.sh), then
     python train/lamar/prepare_lamar.py --merge --output <data>
 
-Windows: 15 to 100 frames, consecutive or every 2nd or 4th frame (C3 reconstructs unordered photo collections).
+Windows (--windows_per_session per session, at random): 50 to 500 frames from a random start, every 1 to 4 frames
+(random intervals), inside a run of kept frames (C3 reconstructs 50 to 150 random photos of a scene).
 Correspondences, as prepare_s3d.py: the pixels of the density map of the 3D points whose positions lie on walls of
 the floorplan (within --max_wall_dist 0.2 m of a wall pixel of hge.png), and the floorplan pixels of these positions. With --plan_source recon (default) the positions are those
 of the reconstructed points placed with the ground-truth pose of the first camera; with --plan_source lidar,
@@ -27,7 +28,7 @@ import pandas as pd
 from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from lamar import (SEQ_LENGTHS, TRAIN_STEPS, Session, filter_ground_points, ground_rotation, iter_train_windows,  # noqa: E402
+from lamar import (TRAIN_FRAMES, TRAIN_MAX_STEP, Session, filter_ground_points, ground_rotation, sample_train_windows,  # noqa: E402
                    lidar_points_cam0, load_floorplan, load_session, load_split, on_plan, top_down_projection,
                    train_frames, window_name, world_to_plan)
 from reconstruction import load_mapanything, load_recon, reconstruct, save_recon  # noqa: E402
@@ -225,6 +226,7 @@ def window_recon(frames: Session, model, cache_dir: str | None, name: str) -> di
     if path and os.path.exists(path):
         return load_recon(path)
     recon = reconstruct(frames.image_paths, frames.K, frames.c2w, model)
+    recon["timestamps"] = frames.timestamps  # the frames of the window (visualize_correspondences.py)
     if path:
         save_recon(path, recon)
     return recon
@@ -273,10 +275,9 @@ def main():
     parser.add_argument("--split", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "split.yaml"))
     parser.add_argument("--sessions", nargs="+", default=["train"], help="splits (train, val, test) or session names")
     parser.add_argument("--plan_size", type=int, default=1024, help="resolution of the floorplan")
-    parser.add_argument("--lengths", type=int, nargs="+", default=list(SEQ_LENGTHS), help="window lengths")
-    parser.add_argument("--steps", type=int, nargs="+", default=list(TRAIN_STEPS), help="frame intervals of the windows")
-    parser.add_argument("--stride", type=float, default=0.5, help="stride between windows, as a fraction of their span")
-    parser.add_argument("--windows_per_session", type=int, default=None, help="random subset of the windows of a session")
+    parser.add_argument("--windows_per_session", type=int, default=50, help="random windows per session")
+    parser.add_argument("--num_frames", type=int, nargs=2, default=list(TRAIN_FRAMES), help="min and max frames of a window")
+    parser.add_argument("--max_step", type=int, default=TRAIN_MAX_STEP, help="largest interval between the frames of a window")
     parser.add_argument("--conf", type=int, nargs="+", default=list(CONF_THRESHOLDS), help="confidence thresholds (percentiles)")
     parser.add_argument("--plan_source", default="recon", choices=["recon", "lidar"], help="3D points of the correspondences")
     parser.add_argument("--no_lidar_samples", action="store_true", help="no density maps of the LiDAR points")
@@ -315,19 +316,18 @@ def main():
     for session_name in [name for key in args.sessions for name in (split[key] if key in split else [key])]:
         session = load_session(args.map_dir, args.raw_dir, session_name)
         sessions[session_name] = session.subset(train_frames(session, plan_params))
-        windows = iter_train_windows(sessions[session_name].timestamps, tuple(args.lengths), tuple(args.steps), args.stride)
-        if args.windows_per_session and len(windows) > args.windows_per_session:
-            windows = [windows[i] for i in sorted(rng.choice(len(windows), args.windows_per_session, replace=False))]
-        jobs += [(session_name, *window) for window in windows]
+        windows = sample_train_windows(sessions[session_name].timestamps, args.windows_per_session, rng,
+                                       tuple(args.num_frames), args.max_step)  # the same in every shard (rng)
+        jobs += [(session_name, window) for window in windows]
     jobs = jobs[args.shard::args.num_shards]
     print(f"shard {args.shard}/{args.num_shards}: {len(jobs)} windows")
 
     model = load_mapanything(args.mapanything_model)
     rows = {source: [] for source in SOURCES}
     progress = tqdm(jobs, desc=f"shard {args.shard}")
-    for session_name, start, length, step in progress:
-        frames = sessions[session_name].subset(start + step * np.arange(length))
-        name = window_name(session_name, frames.timestamps[0], length, step)
+    for session_name, window in progress:
+        frames = sessions[session_name].subset(window)
+        name = window_name(session_name, frames.timestamps)
         recon = window_recon(frames, model, args.recon_cache, name)
         # deviation of the poses predicted by MapAnything from the ground truth (the points use the ground truth)
         progress.set_postfix(pose_err_deg=f"{recon['pose_error_deg'].max():.2f}", pose_err_m=f"{recon['pose_error_m'].max():.3f}")

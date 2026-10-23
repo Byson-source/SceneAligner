@@ -27,7 +27,7 @@
 - pose・画像は benchmark 版 `HGE/sessions/map` (unloc と同じ)、LiDAR depth は raw セッション `ios_<date>_<time>` から timestamp で対応付け。
 - split は unloc (`train/lamar/split.yaml`: train 12 / val 1 / test 3)。評価は Z-FLoc (非重複 L 窓 15/20/35/50/100、最終 10 フレーム全て <1 m で成功、seed 42〜46、0.055 m/px)。
 - 学習データは upstream (Cornell-VAILab/SceneAligner) の `prepare_c3.py` を基本、GT 幾何から対応点を作る部分は `prepare_s3d.py` (fork では削除済み、`git show 65f91be:prepare_s3d.py`) に合わせる。独自設定は入れない (対応表は `train/lamar/README.md`)。
-  - 窓: 長さ 15/20/35/50/100 × フレーム間隔 1/2/4 (C3 の写真集合に倣い広く)。名前・cache は `<session>_t<先頭 ts>_L<len>_k<step>`。学習フレームは UnLoc の室内区間 + plan 内のみ。
+  - 学習窓 (ユーザー指定): セッションごとに 50 窓をランダム。フレーム数 50〜500・開始位置・フレーム間隔 (1〜4) をランダム (5 s 超の欠落を跨がない)。名前・cache は `<session>_t<先頭 ts>_n<枚数>_<crc32>` (recon に timestamps を保存)。評価窓は Z-FLoc のまま。学習フレームは UnLoc の室内区間 + plan 内のみ。
   - MapAnything sample: C3 と同じ conf 30/45/60/75/90 × xz 0/2.5/5 × gamma 4 種、フレームごと 8 点以上、RANSAC 一貫性 (10 px/512)。
   - LiDAR sample: S3D の GT depth sample と同じ (高さ 20〜95 %, xz 2.5 %, gamma 0.5, 10 点以上, 一貫性なし)。
   - 対応点: S3D と同じく壁上の点のみ。許容幅は hge.png の壁から 0.2 m (0.5 m は緩すぎるとしてユーザー判断で戻した。遠い壁の点は減る)。

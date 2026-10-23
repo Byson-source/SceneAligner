@@ -11,6 +11,7 @@ import argparse
 import io
 import os
 import sys
+import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,7 +26,8 @@ PLAN_FULL_SIZE = (3278, 2334)  # (width, height) of hge.png
 METRES_PER_PIXEL = 0.055  # of hge.png, the value Z-FLoc uses for its errors (the affine below gives 0.0546)
 GRAVITY_WORLD = np.array([0.0, 0.0, -1.0])  # the world frame of LaMAR is z-up
 SEQ_LENGTHS = (15, 20, 35, 50, 100)  # window lengths of the Z-FLoc evaluation
-TRAIN_STEPS = (1, 2, 4)  # frame intervals of the training windows (C3 reconstructs unordered photo collections)
+TRAIN_FRAMES = (50, 500)  # frames of a training window, drawn at random (C3 reconstructs 50 to 150 random photos)
+TRAIN_MAX_STEP = 4  # intervals between the frames of a training window: random in 1..TRAIN_MAX_STEP
 DEPTH_SCALE = 1000.0  # LaMAR depth maps: 16-bit PNG in millimetres
 HGE_INTRINSICS = np.array([[1596.080444, 0.0, 716.836365], [0.0, 1596.080444, 939.086121], [0.0, 0.0, 1.0]])  # of the 1440 x 1920 photos (Z-FLoc)
 
@@ -446,45 +448,62 @@ def iter_test_windows(num_kept: int, seq_length: int) -> list[slice]:
     return [slice(k * seq_length, (k + 1) * seq_length) for k in range(num_kept // seq_length)]
 
 
-def iter_train_windows(timestamps: np.ndarray, lengths: tuple = SEQ_LENGTHS, steps: tuple = TRAIN_STEPS,
-                       stride_frac: float = 0.5, max_gap_s: float = 5.0) -> list[tuple[int, int, int]]:
+def train_runs(timestamps: np.ndarray, max_gap_s: float = 5.0) -> list[tuple[int, int]]:
     """
-    Training windows: length frames taken every step kept frames, for every length and step, starting every
-    stride_frac of the span, without windows across a gap of the timestamps (the frames dropped by the filters).
+    Runs of kept frames without a gap of more than max_gap_s (the frames dropped by the filters).
     Args:
         timestamps (np.ndarray): integer tensor with shape [N], microseconds of the kept frames, increasing
-        lengths (tuple): window lengths (frames)
-        steps (tuple): intervals between the frames of a window (1: consecutive)
-        stride_frac (float): stride between the starts, as a fraction of the span step * length
-        max_gap_s (float): largest gap between consecutive kept frames inside a window [s]
+        max_gap_s (float): largest gap between consecutive frames of a run [s]
 
     Returns:
-        list[tuple[int, int, int]]: (start, length, step); the window holds kept frames start + step * arange(length)
+        list[tuple[int, int]]: (first frame, number of frames) of every run
     """
-    gaps = np.diff(timestamps) / 1e6 > max_gap_s  # [N - 1], gap after frame i
+    cuts = np.nonzero(np.diff(timestamps) / 1e6 > max_gap_s)[0] + 1
+    starts, ends = np.concatenate([[0], cuts]), np.concatenate([cuts, [len(timestamps)]])
+    return [(int(a), int(b - a)) for a, b in zip(starts, ends)]
+
+
+def sample_train_windows(timestamps: np.ndarray, num_windows: int, rng: np.random.Generator,
+                         num_frames: tuple = TRAIN_FRAMES, max_step: int = TRAIN_MAX_STEP) -> list[np.ndarray]:
+    """
+    Random training windows: a run (train_runs) drawn proportionally to its length, a number of frames drawn in
+    num_frames (at most the run), intervals drawn in 1..max_step (fewer if the run is too short), a random start.
+    Args:
+        timestamps (np.ndarray): integer tensor with shape [N], microseconds of the kept frames, increasing
+        num_windows (int): windows to draw
+        rng (np.random.Generator): random generator
+        num_frames (tuple): (min, max) frames of a window; runs shorter than min are not used
+        max_step (int): largest interval between the frames of a window
+
+    Returns:
+        list[np.ndarray]: indices of the kept frames of every window, increasing
+    """
+    runs = [run for run in train_runs(timestamps) if run[1] >= num_frames[0]]
+    if not runs:
+        return []
+    lengths = np.array([n for _, n in runs], dtype=np.float64)
     windows = []
-    for step in steps:
-        for length in lengths:
-            span = step * (length - 1) + 1  # kept frames from the first to the last of the window
-            for start in range(0, len(timestamps) - span + 1, max(1, int(step * length * stride_frac))):
-                if not gaps[start:start + span - 1].any():
-                    windows.append((start, length, step))
+    for r in rng.choice(len(runs), num_windows, p=lengths / lengths.sum()):
+        first, run_len = runs[r]
+        n = int(rng.integers(num_frames[0], min(num_frames[1], run_len) + 1))
+        steps = rng.integers(1, min(max_step, (run_len - 1) // max(1, n - 1)) + 1, n - 1)  # the window fits the run
+        offsets = np.concatenate([[0], np.cumsum(steps)])
+        windows.append(first + int(rng.integers(0, run_len - offsets[-1])) + offsets)
     return windows
 
 
-def window_name(session: str, first_timestamp: int, length: int, step: int) -> str:
+def window_name(session: str, timestamps: np.ndarray) -> str:
     """
-    Name of a training window (files and cached reconstructions), by the timestamp of its first frame.
+    Name of a training window (files and cached reconstructions): its first timestamp, number of frames and a hash
+    of its timestamps.
     Args:
         session (str): session name
-        first_timestamp (int): microseconds
-        length (int): frames
-        step (int): interval between the frames
+        timestamps (np.ndarray): integer tensor with shape [S], microseconds of the frames of the window
 
     Returns:
-        str: "<session>_t<timestamp>_L<length>_k<step>"
+        str: "<session>_t<first timestamp>_n<S>_<crc32 of the timestamps>"
     """
-    return f"{session}_t{first_timestamp}_L{length}_k{step}"
+    return f"{session}_t{int(timestamps[0])}_n{len(timestamps)}_{zlib.crc32(np.asarray(timestamps, np.int64).tobytes()):08x}"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -801,7 +820,8 @@ def check(args: argparse.Namespace) -> None:
                 detail = f"kept by the index shift: {len(kept)}"
             else:
                 kept = train_frames(session, plan_params)
-                detail = f"indoor and in bounds: {len(kept)}, train windows: {len(iter_train_windows(session.timestamps[kept]))}"
+                runs = [n for _, n in train_runs(session.timestamps[kept])]
+                detail = f"indoor and in bounds: {len(kept)}, runs without gaps: {runs}"
             raw_state = "no raw session" if raw is None or not raw.is_dir() else f"depth for {with_depth}/{len(session)} frames"
             images_found = sum(os.path.exists(p) for p in session.image_paths)
             print(f"{split} {name}: {len(session)} frames ({images_found} images found), {detail}, {raw_state}, "
