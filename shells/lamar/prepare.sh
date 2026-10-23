@@ -6,9 +6,11 @@
 #PBS -v RTYPE=rt_HG
 #PBS -m abe
 #PBS -k oed
-# LaMAR HGE training data: data check, then MapAnything reconstructions and density maps of the train windows
-# ($DATA) and of the val windows ($DATA/val, validation of train.py).
-# Called by prepare_hf.sh / prepare_hg.sh with DATA and RTYPE. NUM_GPUS: processes (default: the GPUs of the node).
+# LaMAR HGE training data: data check, MapAnything on the frames of the train and val sessions (cached), then the
+# density maps of random windows assembled from the cached points: other windows at every epoch of train.py
+# ($DATA/epoch_<e>), and one set of val windows ($DATA/val/epoch_000, validation of train.py).
+# Called by prepare_hf.sh / prepare_hg.sh with DATA and RTYPE. NUM_GPUS: MapAnything processes (default: the GPUs
+# of the node); NUM_WORKERS: CPU processes of the windows. e.g. qsub -v EPOCHS=40,WINDOWS=100 shells/lamar/prepare_hf.sh
 
 source /etc/profile.d/modules.sh
 export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner
@@ -30,26 +32,37 @@ python -c "import sys; print('python:', sys.executable, sys.version.split()[0])"
 
 python train/lamar/lamar.py --check --map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" --floorplan "$FLOORPLAN" --plan_size "$PLAN_SIZE"
 
-# One process per GPU (rt_HF: all GPUs of the node, rt_HG: one), each with a share of the windows; logs in <output>/shards
-NUM_GPUS="${NUM_GPUS:-$(nvidia-smi -L | wc -l)}"
 SPLITS="${SPLITS:-train val}"  # train -> $DATA, val -> $DATA/val (validation of train.py); e.g. qsub -v SPLITS=val
-echo "$NUM_GPUS GPUs"
-prepare() {  # prepare <output> <split>
-    local output="$1" split="$2" pids=()
-    mkdir -p "$output/shards" && rm -f "$output"/shards/lamar_*.csv
-    for ((i = 0; i < NUM_GPUS; i++)); do
-        CUDA_VISIBLE_DEVICES=$i python train/lamar/prepare_lamar.py --map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" \
-            --floorplan "$FLOORPLAN" --output "$output" --plan_size "$PLAN_SIZE" --recon_cache "$DATA/recon_cache" \
-            --sessions "$split" --shard "$i" --num_shards "$NUM_GPUS" > "$output/shards/prepare_$i.log" 2>&1 &
+EPOCHS="${EPOCHS:-20}"         # sets of train windows, one per epoch of train.py ($DATA/epoch_<e>); val: one set
+WINDOWS="${WINDOWS:-50}"       # random windows per session and epoch, every one a different combination of frames
+CACHE="${CACHE:-$DATA/session_cache}"  # MapAnything on chunks of the sessions, shared by train and val
+NUM_GPUS="${NUM_GPUS:-$(nvidia-smi -L | wc -l)}"
+NUM_WORKERS="${NUM_WORKERS:-32}"  # CPU processes of the samples (a window of 500 frames takes a few GB)
+LOGS="$DATA/logs"
+mkdir -p "$LOGS"
+echo "$NUM_GPUS GPUs, $NUM_WORKERS workers"
+common=(--map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" --floorplan "$FLOORPLAN" --plan_size "$PLAN_SIZE" --session_cache "$CACHE")
+run_shards() {  # run_shards <processes> <log prefix> <gpu: 1|0 (no GPU)> <args...>: one process per shard, then wait
+    local n="$1" log="$2" gpu="$3" pids=()
+    shift 3
+    for ((i = 0; i < n; i++)); do
+        CUDA_VISIBLE_DEVICES=$( ((gpu)) && echo "$i") python train/lamar/prepare_lamar.py "$@" --shard "$i" --num_shards "$n" \
+            > "${log}_$i.log" 2>&1 &
         pids+=($!)
     done
     for i in "${!pids[@]}"; do
-        wait "${pids[$i]}" || { echo "shard $i failed: see $output/shards/prepare_$i.log"; exit 1; }
+        wait "${pids[$i]}" || { echo "shard $i failed: see ${log}_$i.log"; exit 1; }
     done
-    if ((NUM_GPUS > 1)); then  # one process writes the CSV files itself
-        python train/lamar/prepare_lamar.py --merge --output "$output"
-    fi
 }
+
+# 1. MapAnything on chunks of consecutive frames of the sessions, one process per GPU (cached chunks are skipped)
+run_shards "$NUM_GPUS" "$LOGS/recon" 1 --stage recon "${common[@]}" --sessions $SPLITS
+# 2. The windows of every epoch from the cached points (CPU); the previous ones are replaced
 for split in $SPLITS; do
-    prepare "$DATA$([[ $split == train ]] || echo "/$split")" "$split"
+    output="$DATA$([[ $split == train ]] || echo "/$split")"
+    epochs=$([[ $split == train ]] && echo "$EPOCHS" || echo 1)
+    rm -rf "$output"/epoch_*
+    run_shards "$NUM_WORKERS" "$LOGS/samples_$split" 0 --stage samples "${common[@]}" --sessions "$split" \
+        --output "$output" --epochs "$epochs" --windows_per_session "$WINDOWS"
+    python train/lamar/prepare_lamar.py --merge --output "$output"
 done

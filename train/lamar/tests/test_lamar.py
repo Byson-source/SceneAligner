@@ -73,6 +73,12 @@ def test_indoor_and_windows():
         assert 10 <= len(w) <= 40 and steps.min() >= 1 and steps.max() <= 4
         assert (w[-1] < 60) or (w[0] >= 60)  # inside one run
     assert not lamar.sample_train_windows(gapped, 5, rng, num_frames=(70, 100))  # no run is long enough
+    seen = set()
+    distinct = [w for _ in range(3) for w in lamar.sample_distinct_windows(gapped, 20, rng, seen, num_frames=(10, 40))]
+    assert len(distinct) == 60 and len({tuple(w) for w in distinct}) == 60  # different combinations over the epochs
+    chunks = lamar.session_chunks(gapped, 25)
+    assert [len(c) for c in chunks] == [20, 20, 20, 15, 15]  # runs of 60 and 30 frames
+    assert np.array_equal(np.concatenate(chunks), np.arange(90))
     name = lamar.window_name("ios_x_000", np.array([123, 456]))
     assert name.startswith("ios_x_000_t123_n2_") and name != lamar.window_name("ios_x_000", np.array([123, 457]))
     assert lamar.iter_test_windows(23, 10) == [slice(0, 10), slice(10, 20)]
@@ -176,3 +182,32 @@ def test_pose_deviation():
     poses[1, :3, 3] = [0.3, 0.4, 0.0]
     deg, m = lamar.pose_deviation(poses, reference)
     assert np.allclose(deg, [0.0, 3.0]) and np.allclose(m, [0.0, 0.5])
+
+
+def test_window_from_cached_chunks(tmp_path):
+    reconstruction = pytest.importorskip("reconstruction")  # torch
+    rng = np.random.default_rng(0)
+    S, H, W = 4, 2, 3
+    c2w = np.tile(np.eye(4), (S, 1, 1))
+    for i in range(S):
+        c2w[i, :3, :3] = lamar.ground_rotation(rng.normal(size=3) / np.sqrt(3) + np.array([0, 0, -1]))
+        c2w[i, :3, 3] = rng.uniform(-5, 5, 3)
+    local = rng.uniform(-2, 2, (S, H, W, 3)).astype(np.float32)  # points of every frame in its camera frame
+    mask = rng.uniform(size=(S, H, W)) > 0.3
+    timestamps = np.arange(S) * 500_000
+    for chunk in (slice(0, 2), slice(2, 4)):  # two chunks, reconstructed in the frame of their first camera
+        ext = lamar.relative_extrinsics(c2w[chunk])
+        recon = {"points_cam0": local[chunk] @ ext[:, None, :3, :3].transpose(0, 1, 3, 2) + ext[:, None, None, :3, 3],
+                 "mask": mask[chunk], "extrinsics": ext, "conf": np.ones((2, H, W), np.float32),
+                 "preprocessed_images": np.zeros((2, H, W, 3), np.uint8), "intrinsics": np.tile(np.eye(3), (2, 1, 1)),
+                 "pose_error_deg": np.zeros(2), "pose_error_m": np.zeros(2)}
+        reconstruction.save_chunk(str(tmp_path / f"t{timestamps[chunk][0]}_n2"), recon, timestamps[chunk], local[chunk])
+    cache = reconstruction.SessionCache(str(tmp_path))
+    window = [1, 2, 3]  # across the chunks
+    recon = reconstruction.window_from_cache(cache, timestamps[window], c2w[window])
+    ext = np.linalg.inv(c2w[1]) @ c2w[window]  # camera-to-camera-0 of the window
+    expected = local[window] @ ext[:, None, :3, :3].transpose(0, 1, 3, 2) + ext[:, None, None, :3, 3]
+    assert np.array_equal(recon["mask"], mask[window])
+    assert np.abs(recon["points_cam0"] - np.where(mask[window, ..., None], expected, 0)).max() < 0.02  # float16
+    assert np.abs(recon["lidar_cam0"] - expected).max() < 0.02
+    assert np.allclose(recon["est_gravity_cam"], lamar.gravity_cam0(c2w[1]))

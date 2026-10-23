@@ -6,7 +6,8 @@
 #PBS -v RTYPE=rt_HG
 #PBS -m abe
 #PBS -k oed
-# Training of the LoRA layers on the LaMAR HGE data of prepare_lamar.py, logged to wandb.
+# Training of the LoRA layers on the LaMAR HGE data of prepare_lamar.py, logged to wandb. Epoch e takes the windows
+# of $DATA/epoch_<e> (other windows at every epoch; in turn if prepare.sh made fewer sets than EPOCHS).
 # Called by lamar_hf.sh / lamar_hg.sh with DATA and RTYPE; can be submitted alone: qsub -v DATA=<data> shells/train/train.sh
 # Hyperparameters of the Structured3D training of SceneAligner (--epochs 20 --min_points 1000, one resolution: that of
 # the floorplan, 1024 here). Every job writes a new run (outputs/<...>_<date>_<time>);
@@ -33,7 +34,7 @@ PLAN_GRID="${PLAN_GRID:-8}"      # one correspondence per 8 px (1.4 m) of the 10
 NUM_GPUS="${NUM_GPUS:-$(nvidia-smi -L | wc -l)}"
 VAL_DATA="${VAL_DATA:-$DATA/val}"  # val windows (prepare.sh), evaluated after every epoch if they exist
 val_args=()
-if [[ -f "$VAL_DATA/lamar_mapanything.csv" ]]; then val_args=(--val_data "$VAL_DATA"); fi
+if compgen -G "$VAL_DATA/epoch_*/lamar_mapanything.csv" > /dev/null; then val_args=(--val_data "$VAL_DATA"); fi
 
 torchrun --standalone --nproc_per_node="$NUM_GPUS" train.py --data "$DATA" --output "$RUN" --epochs "$EPOCHS" \
     --resolutions 1024 --min_points 1000 \

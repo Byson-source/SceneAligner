@@ -10,9 +10,9 @@ removed from this fork) where correspondences come from ground-truth geometry in
 
 | | C3 (`prepare_c3.py`) | Structured3D (`prepare_s3d.py`) | LaMAR HGE (`prepare_lamar.py`) |
 |---|---|---|---|
-| reconstruction | pi3 / VGGT, 50 to 150 photos, or one | pi3, one view | MapAnything with ground-truth intrinsics and relative poses, 50 random windows per session: 50 to 500 frames, random start and intervals (1 to 4 frames) |
+| reconstruction | pi3 / VGGT, 50 to 150 photos, or one | pi3, one view | MapAnything with ground-truth intrinsics and relative poses on chunks of up to 500 consecutive frames of a session (cached); per epoch, 50 random windows per session assembled from the cached points: 50 to 500 frames, random start and intervals (1 to 4 frames), every window a different combination of frames |
 | gravity | GeoCalib | GeoCalib | ground-truth pose (z-up world) |
-| reconstruction samples | conf 30/45/60/75/90 x x/z 0/2.5/5 x gamma 0.25/0.5/0.75/1 | conf 45, x/z 2.5, gamma 0.5 | as C3 |
+| reconstruction samples | conf 30/45/60/75/90 x x/z 0/2.5/5 x gamma 0.25/0.5/0.75/1 | conf 45, x/z 2.5, gamma 0.5 | one of those of C3 per window, at random |
 | ground-truth geometry samples | - | density map of the ground-truth depth | density map of the LiDAR depth maps |
 | correspondences | annotated | ground-truth points on walls (dark pixels of the 512 px plan) | points within 0.2 m of a wall of hge.png |
 | minimum correspondences | 8 per photo | 10 per sample | 8 per frame, 10 per LiDAR sample |
@@ -81,19 +81,31 @@ The weights `facebook/map-anything` (CC BY-NC 4.0) are downloaded from the Huggi
 ## Training data
 
 ```bash
-python train/lamar/prepare_lamar.py --map_dir <LAMAR_ROOT>/HGE/sessions/map --raw_dir <LAMAR_ROOT> \
-    --floorplan <LAMAR_ROOT>/hge.png --output <data> --recon_cache <data>/recon_cache
+python train/lamar/prepare_lamar.py --stage recon --map_dir <LAMAR_ROOT>/HGE/sessions/map --raw_dir <LAMAR_ROOT> \
+    --floorplan <LAMAR_ROOT>/hge.png --session_cache <data>/session_cache                        # GPU
+python train/lamar/prepare_lamar.py --stage samples --map_dir <LAMAR_ROOT>/HGE/sessions/map --raw_dir <LAMAR_ROOT> \
+    --floorplan <LAMAR_ROOT>/hge.png --session_cache <data>/session_cache --output <data> --epochs 20  # CPU
 ```
 
-For every train session, `--windows_per_session 50` random windows (`lamar.sample_train_windows`): a run of kept
-frames without a gap of more than 5 s, drawn proportionally to its length; 50 to 500 frames (`--num_frames`, at most
-the run); intervals drawn in 1 to 4 frames (`--max_step`; consecutive frames are about 0.5 m apart); a random start.
-They are reconstructed with MapAnything and cached as `<session>_t<first timestamp>_n<frames>_<crc32>.npz` (with the
-timestamps of the frames). The test windows stay those of Z-FLoc (15 to 100 consecutive frames). Each window gives:
-- `mapanything/`: density maps of the reconstruction for the confidence thresholds, x/z slices and gammas of
-  `prepare_c3.py`, with the correspondences of the frames that have at least 8 of them, kept if they agree with a
-  similarity transform. `--plan_source lidar` places the correspondences with the LiDAR points instead of the
-  reconstructed ones (as `prepare_s3d.py` does with the ground-truth depth).
+`--stage recon` reconstructs the kept frames of every session once with MapAnything, in chunks of at most
+`--chunk_size 500` consecutive frames (`lamar.session_chunks`, inside runs without a gap of more than 5 s), and
+caches them in `<data>/session_cache/<session>/t<first timestamp>_n<frames>/` (`reconstruction.save_chunk`): the
+points of every frame in its own camera frame (float16, memory-mapped), its confidence, mask, image and intrinsics,
+and its LiDAR points. Delete the cache after changing `--chunk_size`.
+
+`--stage samples` draws, for each of `--epochs` epochs and every train session, `--windows_per_session 50` random
+windows (`lamar.sample_distinct_windows`): a run of kept frames drawn proportionally to its length; 50 to 500 frames
+(`--num_frames`, at most the run); intervals drawn in 1 to 4 frames (`--max_step`; consecutive frames are about
+0.5 m apart); a random start; every window a combination of frames not drawn before, in any epoch. A window takes the
+cached points of its frames, placed with the ground-truth poses relative to its first frame
+(`reconstruction.window_from_cache`), so a window can span chunks. The windows of epoch e go to `<data>/epoch_<e>`
+(`meta/windows.csv` lists their frames); the test windows stay those of Z-FLoc (15 to 100 consecutive frames). Each
+window gives:
+- `mapanything/`: one density map of the reconstruction, for a random confidence threshold, x/z slice and gamma of
+  `prepare_c3.py` (the threshold and slice pairs are tried in random order until one keeps the correspondences of
+  the frames that have at least 8 of them and they agree with a similarity transform). `--plan_source lidar` places
+  the correspondences with the LiDAR points instead of the reconstructed ones (as `prepare_s3d.py` does with the
+  ground-truth depth).
 - `lidar/`: one density map of the LiDAR points (gamma 0.5), seen from above in the gravity-aligned frame of the
   first camera, as `prepare_s3d.depth_sample`, if it has at least 10 correspondences.
 
@@ -101,15 +113,16 @@ The CSV columns `rgb`, `camera_plan` and `camera_density` (the photo and the pos
 used by the visualizations of `train.py`. All windows share the floorplan, so `scene_id` is `hge` for all of them;
 `--scene_id cell` names 20 m cells instead.
 
-To look at the correspondences, `visualize_correspondences.py` draws, for random windows of the cache (or
+To look at the correspondences, `visualize_correspondences.py` draws, for random windows of one epoch (or
 `--windows <name>`), the pixels of a frame whose points lie on walls, these points on a density map (`--conf`,
 `--xz`) and on hge.png (cropped around them, the camera in blue), in seven colours from the left (red) to the right
 (violet) of the photo. It reads
-`recon_cache` and needs no GPU:
+the session cache and needs no GPU:
 
 ```bash
 python train/lamar/visualize_correspondences.py --map_dir <LAMAR_ROOT>/HGE/sessions/map --raw_dir <LAMAR_ROOT> \
-    --floorplan <LAMAR_ROOT>/hge.png --recon_cache <data>/recon_cache --output <data>/vis_correspondences
+    --floorplan <LAMAR_ROOT>/hge.png --session_cache <data>/session_cache --data <data>/epoch_000 \
+    --output <data>/vis_correspondences    # val windows: --data <data>/val/epoch_000
 ```
 
 ## Training
@@ -163,21 +176,25 @@ qsub shells/train/lamar_hg.sh                                              # tra
 qsub -v CHECKPOINT=outputs/lamar_lamar_hge_rt_HG_<date>_<time> shells/lamar/evaluate_hg.sh  # val, then test
 ```
 
-`prepare.sh` and `evaluate.sh` run one process per GPU of the node (`--shard i --num_shards n`, round robin over
-the windows; logs in `$DATA/shards/prepare_<i>.log` and `$OUT/<val|test>_results.shard<i>.log`), then merge their
-outputs (`--merge`; the seeds of the alignment depend on the window, not on the shard): `_hf` uses all the GPUs of
+`prepare.sh` runs `--stage recon` with one process per GPU of the node, then `--stage samples` with `NUM_WORKERS`
+CPU processes (default 32; `EPOCHS` sets of `WINDOWS` windows per session, default 20 and 50), logs in
+`$DATA/logs/`; `evaluate.sh` runs one process per GPU (logs in `$OUT/<val|test>_results.shard<i>.log`). Both shard
+round robin (`--shard i --num_shards n`) and merge their outputs (`--merge`; the seeds of the alignment depend on the window, not on the shard): `_hf` uses all the GPUs of
 a node, `_hg` one. `train.sh` runs `train.py` with `torchrun` on all the GPUs of the node (DistributedDataParallel,
 a batch of 4 windows per GPU: 32 on rt_HF, lr unchanged); the points of the batches of all GPUs are the candidates
 of the feature matching loss (all_gather), and the logs are the mean over the GPUs.
 
-`prepare.sh` also makes the windows of the val session in `$DATA/val` (`SPLITS`, default `train val`; only the
-val windows: `qsub -v SPLITS=val shells/lamar/prepare_hf.sh`). When they exist, `train.sh` passes them to
+`prepare.sh` also makes one set of windows of the val session in `$DATA/val/epoch_000` (`SPLITS`, default
+`train val`; only the val windows: `qsub -v SPLITS=val shells/lamar/prepare_hf.sh`). `train.py` takes the windows of
+`<data>/epoch_<e>` at epoch e (in turn if there are fewer sets than epochs). When they exist, `train.sh` passes them to
 `train.py --val_data`, which computes the losses, `acc` and `chance` on them after every epoch (the same
 augmentations at every epoch, seeded by `--seed`) and logs them to wandb (`val/...`) and `<run>/val_log.csv`.
 
-`REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `NUM_GPUS`, `SPLITS`, `VAL_DATA`, `RESUME`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
+`REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `WINDOWS`, `NUM_GPUS`, `NUM_WORKERS`, `CACHE`, `SPLITS`, `VAL_DATA`, `RESUME`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
 `qsub -v`, e.g. `qsub -v DATA=data/lamar_hge,EPOCHS=4 shells/train/lamar_hf.sh`. The cached reconstructions of an
-older version (`<session>_s<start>_L<length>.npz`, indexed by the frames of other filters) are not used and can be deleted.
+older version (`<session>_s<start>_L<length>.npz`, indexed by the frames of other filters), the per-window cache
+`$DATA/recon_cache` and the samples directly in `$DATA` (`mapanything/`, `lidar/`, `lamar_*.csv`) of the previous
+version are not used and can be deleted.
 
 ## Resolution
 

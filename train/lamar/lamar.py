@@ -492,6 +492,51 @@ def sample_train_windows(timestamps: np.ndarray, num_windows: int, rng: np.rando
     return windows
 
 
+def sample_distinct_windows(timestamps: np.ndarray, num_windows: int, rng: np.random.Generator, seen: set,
+                            num_frames: tuple = TRAIN_FRAMES, max_step: int = TRAIN_MAX_STEP) -> list[np.ndarray]:
+    """
+    Random training windows (sample_train_windows) whose combinations of frames are not in seen; seen is updated.
+    Args:
+        timestamps (np.ndarray): integer tensor with shape [N], microseconds of the kept frames, increasing
+        num_windows (int): windows to draw
+        rng (np.random.Generator): random generator
+        seen (set): tuples of the frame indices of the windows drawn before (of every epoch)
+        num_frames (tuple): (min, max) frames of a window
+        max_step (int): largest interval between the frames of a window
+
+    Returns:
+        list[np.ndarray]: indices of the kept frames of every window, increasing
+    """
+    windows = []
+    for _ in range(100 * num_windows):  # duplicates are rare: frames, intervals and start are random
+        if len(windows) == num_windows:
+            break
+        drawn = sample_train_windows(timestamps, 1, rng, num_frames, max_step)
+        if not drawn:
+            break
+        if tuple(drawn[0]) not in seen:
+            seen.add(tuple(drawn[0]))
+            windows.append(drawn[0])
+    return windows
+
+
+def session_chunks(timestamps: np.ndarray, chunk_size: int) -> list[np.ndarray]:
+    """
+    Consecutive kept frames reconstructed together (multi-view MapAnything, cached for all the windows): every run
+    (train_runs) split into the fewest chunks of at most chunk_size frames, of equal lengths.
+    Args:
+        timestamps (np.ndarray): integer tensor with shape [N], microseconds of the kept frames, increasing
+        chunk_size (int): most frames of a chunk
+
+    Returns:
+        list[np.ndarray]: indices of the kept frames of every chunk, covering all of them
+    """
+    chunks = []
+    for first, run_len in train_runs(timestamps):
+        chunks += np.array_split(first + np.arange(run_len), -(-run_len // chunk_size))
+    return chunks
+
+
 def window_name(session: str, timestamps: np.ndarray) -> str:
     """
     Name of a training window (files and cached reconstructions): its first timestamp, number of frames and a hash

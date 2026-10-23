@@ -5,7 +5,13 @@ camera centres of SceneAligner are computed as for pi3).
 MapAnything is called as in Z-FLoc (tools/metadata_generation/geometry_utils.py, process_images): the inputs are
 metric, the poses are OpenCV camera-to-world relative to the first frame, and the gravity direction comes from
 the pose of the first frame instead of GeoCalib.
+
+Training windows are not reconstructed one by one: the kept frames of a session are reconstructed in chunks of
+consecutive frames (save_chunk), and every window is assembled from these points (window_from_cache).
 """
+import os
+from pathlib import Path
+
 import numpy as np
 import torch
 from PIL import Image
@@ -121,6 +127,101 @@ def save_recon(path: str, recon: dict) -> None:
         recon (dict): of reconstruct
     """
     np.savez_compressed(path, **{k: (v.astype(np.float16) if k == "points_cam0" else v) for k, v in recon.items()})
+
+
+CHUNK_KEYS = ("points_cam", "conf", "mask", "preprocessed_images", "intrinsics", "pose_error_deg", "pose_error_m",
+              "lidar_cam")  # per-frame arrays of a cached chunk ("lidar_cam" only with depth), plus "timestamps"
+
+
+def save_chunk(directory: str, recon: dict, timestamps: np.ndarray, lidar_cam: np.ndarray | None) -> None:
+    """
+    Caches the reconstruction of a chunk of a session (lamar.session_chunks) as .npy files (memory-mapped by
+    SessionCache): the points of every frame in its own camera frame (float16), so that any window of the session
+    can be assembled with the ground-truth poses (window_from_cache). timestamps.npy is written last (complete chunk).
+    Args:
+        directory (str): folder of the chunk
+        recon (dict): of reconstruct
+        timestamps (np.ndarray): integer tensor with shape [S], microseconds of the frames
+        lidar_cam (np.ndarray | None): tensor with shape [S, H, W, 3], LiDAR points in the frame of every camera (NaN
+            where missing), None without depth
+    """
+    os.makedirs(directory, exist_ok=True)
+    ext = recon["extrinsics"].astype(np.float32)  # camera-to-camera-0
+    points = (recon["points_cam0"] - ext[:, None, None, :3, 3]) @ ext[:, None, :3, :3]  # R^T (p - t): own camera
+    points[~recon["mask"]] = 0.0
+    arrays = {**{k: recon[k] for k in CHUNK_KEYS[1:-1]}, "points_cam": points.astype(np.float16)}
+    if lidar_cam is not None:
+        arrays["lidar_cam"] = lidar_cam.astype(np.float16)
+    for key, value in arrays.items():
+        np.save(os.path.join(directory, f"{key}.npy"), value)
+    np.save(os.path.join(directory, "timestamps.npy"), np.asarray(timestamps, np.int64))
+
+
+class SessionCache:
+    """The cached chunks (save_chunk) of one session, memory-mapped; frames are taken by timestamp."""
+
+    def __init__(self, directory: str):
+        chunk_dirs = sorted(p for p in Path(directory).iterdir() if (p / "timestamps.npy").exists())
+        self.chunks = [{k: np.load(p / f"{k}.npy", mmap_mode="r") for k in (*CHUNK_KEYS, "timestamps")
+                        if (p / f"{k}.npy").exists()} for p in chunk_dirs]
+        order = np.argsort([c["timestamps"][0] for c in self.chunks])
+        self.chunks = [self.chunks[i] for i in order]
+        self.timestamps = np.concatenate([c["timestamps"] for c in self.chunks])
+        self.starts = np.cumsum([0] + [len(c["timestamps"]) for c in self.chunks])[:-1]
+
+    def has(self, key: str) -> bool:
+        """The array is cached for every chunk (lidar_cam: the session has depth)."""
+        return all(key in c for c in self.chunks)
+
+    def take(self, key: str, timestamps: np.ndarray) -> np.ndarray:
+        """
+        Per-frame array of the given frames.
+        Args:
+            key (str): of CHUNK_KEYS
+            timestamps (np.ndarray): integer tensor with shape [S], microseconds of cached frames
+
+        Returns:
+            np.ndarray: tensor with shape [S, ...]
+        """
+        pos = np.searchsorted(self.timestamps, timestamps)
+        assert (pos < len(self.timestamps)).all() and (self.timestamps[pos] == timestamps).all(), "frames not cached"
+        chunk = np.searchsorted(self.starts, pos, side="right") - 1
+        first = self.chunks[0][key]
+        out = np.empty((len(pos), *first.shape[1:]), dtype=first.dtype)
+        for c in np.unique(chunk):
+            sel = chunk == c
+            out[sel] = self.chunks[c][key][pos[sel] - self.starts[c]]
+        return out
+
+
+def window_from_cache(cache: SessionCache, timestamps: np.ndarray, c2w: np.ndarray) -> dict:
+    """
+    Reconstruction of a window assembled from the cached chunks of its session, as reconstruct returns it: the points
+    of every frame placed with its ground-truth pose relative to the first frame of the window.
+    Args:
+        cache (SessionCache): of the session
+        timestamps (np.ndarray): integer tensor with shape [S], microseconds of the frames of the window
+        c2w (np.ndarray): tensor with shape [S, 4, 4], camera-to-world poses [m]
+
+    Returns:
+        dict: the keys of reconstruct, "timestamps", and "lidar_cam0" [S, H, W, 3] (LiDAR points in the frame of
+            camera 0, NaN where missing) if the session has depth
+    """
+    extrinsics = relative_extrinsics(c2w)
+    R, t = extrinsics[:, None, :3, :3].astype(np.float32), extrinsics[:, None, None, :3, 3].astype(np.float32)
+    mask = cache.take("mask", timestamps)
+    points = cache.take("points_cam", timestamps).astype(np.float32) @ R.transpose(0, 1, 3, 2) + t
+    points[~mask] = 0.0
+    S, H, W = mask.shape
+    recon = {"points_cam0": points, "conf": cache.take("conf", timestamps), "mask": mask,
+             "extrinsics": extrinsics.astype(np.float64), "est_gravity_cam": gravity_cam0(c2w[0]),
+             "preprocessed_images": cache.take("preprocessed_images", timestamps),
+             "image_sizes": np.tile(np.array([[W, H]]), (S, 1)), "intrinsics": cache.take("intrinsics", timestamps),
+             "pose_error_deg": cache.take("pose_error_deg", timestamps),
+             "pose_error_m": cache.take("pose_error_m", timestamps), "timestamps": np.asarray(timestamps)}
+    if cache.has("lidar_cam"):
+        recon["lidar_cam0"] = cache.take("lidar_cam", timestamps).astype(np.float32) @ R.transpose(0, 1, 3, 2) + t
+    return recon
 
 
 def load_recon(path: str) -> dict:

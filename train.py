@@ -17,6 +17,7 @@ batch of 4 samples, and the points of the batches of all GPUs are the candidates
 """
 import argparse
 import csv
+import glob
 import os
 import random
 from functools import partial
@@ -71,6 +72,12 @@ def same_scene_mask(scene_ids, negatives):
         mask = np.array(scene_ids)[:, None] == np.concatenate(all_ids)[None]
         mask[np.arange(B), rank * B + np.arange(B)] = False
     return torch.tensor(mask).cuda()
+
+
+def epoch_folders(root):
+    """Data folders of the epochs: <root>/epoch_* (train/lamar/prepare_lamar.py: other windows at every epoch, taken
+    in turn), else root itself (the same samples at every epoch)."""
+    return sorted(glob.glob(os.path.join(root, "epoch_*"))) or [root]
 
 
 def mean_over_gpus(values):
@@ -181,7 +188,8 @@ def visualize(batch, pred, ransac_thr=0.04):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", required=True, help="training data (prepare_c3.py or train/lamar/prepare_lamar.py)")
+    parser.add_argument("--data", required=True, help="training data (prepare_c3.py, or train/lamar/prepare_lamar.py: "
+                        "<data>/epoch_<e> at epoch e)")
     parser.add_argument("--output", required=True, help="directory of the LoRA layers and the training log")
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--resolutions", type=int, nargs="+", default=[512, 768, 1024, 1280], help="one per batch, at random")
@@ -193,7 +201,8 @@ def main():
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--wandb_project", default=None, help="logs the losses and the visualizations to Weights & Biases")
     parser.add_argument("--wandb_name", default=None, help="name of the wandb run")
-    parser.add_argument("--val_data", default=None, help="val data (prepare_lamar.py --sessions val), evaluated after every epoch")
+    parser.add_argument("--val_data", default=None, help="val data (prepare_lamar.py --sessions val --epochs 1), "
+                        "evaluated after every epoch")
     parser.add_argument("--resume", action="store_true", help="continues the run of --output after its last epoch (state.pt)")
     parser.add_argument("--vis_every", type=int, default=500, help="steps between two visualizations (0: none)")
     args = parser.parse_args()
@@ -217,12 +226,20 @@ def main():
     np.random.seed(args.seed + rank)
     torch.manual_seed(args.seed + rank)
     image_size = args.resolutions[0] if len(args.resolutions) == 1 else None
-    dataset = DensityFloorplanDataset(args.data, min_points=args.min_points, image_size=image_size, plan_grid=args.plan_grid)
-    sampler = DistributedSampler(dataset, seed=args.seed) if num_gpus > 1 else None  # same number of batches on every GPU
-    loader = DataLoader(dataset, batch_size=4, shuffle=sampler is None, sampler=sampler, num_workers=4,
-                        collate_fn=partial(collate, resolutions=args.resolutions))
-    total_steps = len(loader) * args.epochs
-    val_dataset = DensityFloorplanDataset(args.val_data, min_points=args.min_points, image_size=image_size,
+    datasets = [DensityFloorplanDataset(folder, min_points=args.min_points, image_size=image_size, plan_grid=args.plan_grid)
+                for folder in epoch_folders(args.data)]
+
+    def epoch_loader(epoch):
+        """Data loader of an epoch (the dataset of its folder) and its sampler."""
+        dataset = datasets[epoch % len(datasets)]
+        sampler = DistributedSampler(dataset, seed=args.seed) if num_gpus > 1 else None  # same number of batches on every GPU
+        return DataLoader(dataset, batch_size=4, shuffle=sampler is None, sampler=sampler, num_workers=4,
+                          collate_fn=partial(collate, resolutions=args.resolutions)), sampler
+
+    total_steps = sum(len(epoch_loader(epoch)[0]) for epoch in range(args.epochs))
+    if rank == 0:
+        print(f"{len(datasets)} data folders of {sum(len(d) for d in datasets)} samples, {total_steps} steps")
+    val_dataset = DensityFloorplanDataset(epoch_folders(args.val_data)[0], min_points=args.min_points, image_size=image_size,
                                           plan_grid=args.plan_grid) if args.val_data else None
 
     lora = LoraConfig(r=16, lora_alpha=16, lora_dropout=0.1, target_modules=["qkv", "proj", "fc1", "fc2"])
@@ -252,6 +269,7 @@ def main():
         if not first_epoch:
             log.writerow(["step", "loss", *columns])
     for epoch in range(first_epoch, args.epochs):
+        loader, sampler = epoch_loader(epoch)
         if sampler is not None:
             sampler.set_epoch(epoch)
         for batch in tqdm(loader, desc=f"epoch {epoch + 1}/{args.epochs}", disable=rank != 0):

@@ -4,32 +4,30 @@ points lie on walls of the floorplan and are on the density map, all of them (no
 prepare_lamar.py, --max_points per window). First row: the correspondences of one frame, coloured by the column of
 the photo (seven colours, red on the left); second row: those of the whole window, coloured by frame (red: first,
 violet: last), next to the same photo without points.
-Reads the reconstructions cached by prepare_lamar.py (--recon_cache): no GPU.
+Reads the windows of one epoch of prepare_lamar.py (--data <data>/epoch_<e>, meta/windows.csv) and the cached
+reconstructions of their sessions (--session_cache): no GPU.
 
     python train/lamar/visualize_correspondences.py --map_dir <HGE/sessions/map> --raw_dir <raw sessions> \
-        --floorplan hge.png --recon_cache <data>/recon_cache --output <data>/vis_correspondences
+        --floorplan hge.png --session_cache <data>/session_cache --data <data>/epoch_000 --output <data>/vis_correspondences
 """
 import argparse
 import os
-import re
 import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lamar import load_floorplan, load_session, train_frames, world_to_plan_full  # noqa: E402
 from prepare_lamar import plan_correspondences, window_world  # noqa: E402
-from reconstruction import load_recon  # noqa: E402
+from reconstruction import SessionCache, window_from_cache  # noqa: E402
 from prepare_lamar import DENSITY_SIZE, MAX_WALL_DIST_M  # noqa: E402
 from scenealigner.evaluation import get_camera_center_on_density_px, process_gt_correspondences  # noqa: E402
 from scenealigner.inference import reconstruct_projection_geometry  # noqa: E402
 from scenealigner.training import render_training_map  # noqa: E402
 from scenealigner.visualization import draw_correspondence_rows, rainbow  # noqa: E402
-
-WINDOW_NAME = re.compile(r"(?P<session>.+)_t(?P<timestamp>\d+)_n(?P<frames>\d+)_[0-9a-f]{8}$")  # lamar.window_name
-
 
 def filter_masks(recon: dict, R_rect: np.ndarray, conf_percent: float, xz_slice_val: float) -> tuple[dict, tuple]:
     """
@@ -104,10 +102,11 @@ def main():
     parser.add_argument("--map_dir", required=True, help="HGE/sessions/map")
     parser.add_argument("--raw_dir", default=None, help="directory of the raw phone sessions (LiDAR gate as prepare_lamar.py)")
     parser.add_argument("--floorplan", required=True, help="hge.png")
-    parser.add_argument("--recon_cache", required=True, help="reconstructions cached by prepare_lamar.py")
+    parser.add_argument("--session_cache", required=True, help="reconstructions of the sessions cached by prepare_lamar.py")
+    parser.add_argument("--data", required=True, help="windows of one epoch of prepare_lamar.py (<data>/epoch_<e>, <data>/val/epoch_000)")
     parser.add_argument("--output", required=True)
     parser.add_argument("--windows", nargs="+", default=None, help="window names (lamar.window_name); default: random")
-    parser.add_argument("--num_windows", type=int, default=10, help="random windows of the cache without --windows")
+    parser.add_argument("--num_windows", type=int, default=10, help="random windows of --data without --windows")
     parser.add_argument("--num_frames", type=int, nargs=2, default=None, help="only random windows of min to max frames")
     parser.add_argument("--frames", type=int, nargs="+", default=None,
                         help="frames of a window (indices, -1: last); default: the 2 with most points on the density map")
@@ -122,23 +121,25 @@ def main():
     rng = np.random.default_rng(args.seed)
     _, plan_params = load_floorplan(args.floorplan)
     plan_full = np.array(Image.open(args.floorplan).convert("RGB"))
+    listed = pd.read_csv(os.path.join(args.data, "meta", "windows.csv")).set_index("name")
     windows = args.windows
     if windows is None:
-        cached = sorted(p.stem for p in Path(args.recon_cache).glob("*.npz") if WINDOW_NAME.match(p.stem))
+        names = list(listed.index)
         if args.num_frames:
-            cached = [n for n in cached if args.num_frames[0] <= int(WINDOW_NAME.match(n)["frames"]) <= args.num_frames[1]]
-        windows = [cached[i] for i in sorted(rng.choice(len(cached), min(args.num_windows, len(cached)), replace=False))]
+            names = [n for n in names if args.num_frames[0] <= len(listed.timestamps[n].split()) <= args.num_frames[1]]
+        windows = [names[i] for i in sorted(rng.choice(len(names), min(args.num_windows, len(names)), replace=False))]
     os.makedirs(args.output, exist_ok=True)
 
-    sessions = {}
+    sessions, caches = {}, {}
     for name in windows:
-        match = WINDOW_NAME.match(name)
-        session_name = match["session"]
+        session_name = listed.session[name]
         if session_name not in sessions:
             session = load_session(args.map_dir, args.raw_dir, session_name)
             sessions[session_name] = session.subset(train_frames(session, plan_params))
-        recon = load_recon(os.path.join(args.recon_cache, f"{name}.npz"))
-        frames = sessions[session_name].subset(np.searchsorted(sessions[session_name].timestamps, recon["timestamps"]))
+            caches[session_name] = SessionCache(os.path.join(args.session_cache, session_name))
+        timestamps = np.array(listed.timestamps[name].split(), dtype=np.int64)
+        frames = sessions[session_name].subset(np.searchsorted(sessions[session_name].timestamps, timestamps))
+        recon = window_from_cache(caches[session_name], frames.timestamps, frames.c2w)
         length = len(frames)
         world, _ = window_world(frames, recon, args.plan_source)
         if world is None:
