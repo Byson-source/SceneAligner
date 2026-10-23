@@ -160,7 +160,11 @@ qsub shells/train/lamar_hg.sh                                              # tra
 qsub -v CHECKPOINT=outputs/lamar_lamar_hge_rt_HG shells/lamar/evaluate_hg.sh  # val, then test
 ```
 
-`REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
+`prepare.sh` runs one `prepare_lamar.py` per GPU of the node (`--shard i --num_shards n`, round robin over the
+windows, logs in `$DATA/shards/prepare_<i>.log`), then merges their CSV files (`--merge`): use `prepare_hf.sh` (a
+full node). `train.py` and `evaluate_lamar.py` use one GPU: `lamar_hg.sh` / `evaluate_hg.sh`.
+
+`REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `NUM_GPUS`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
 `qsub -v`, e.g. `qsub -v DATA=data/lamar_hge,EPOCHS=4 shells/train/lamar_hf.sh`. The cached reconstructions of an
 older version (`<session>_s<start>_L<length>.npz`, indexed by the frames of other filters) are not used and can be deleted.
 

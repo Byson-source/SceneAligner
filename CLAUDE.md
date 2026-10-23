@@ -38,7 +38,7 @@
 
 構成
 - `train/lamar/`: `lamar.py` (CAPTURE 読込, affine, 壁判定, フィルタ, 窓, LiDAR), `reconstruction.py` (MapAnything), `prepare_lamar.py`, `evaluate_lamar.py`, `visualize_correspondences.py` (RGB・density・floorplan の対応点を 7 色で描画), `split.yaml`, `tests/`
-- `shells/lamar/`: `download_lamar.sh`, `prepare.sh` (+`_hf`/`_hg`), `evaluate.sh` (+`_hf`/`_hg`)。`shells/train/`: `train.sh`, `lamar_hf.sh`, `lamar_hg.sh`
+- `shells/lamar/`: `download_lamar.sh`, `prepare.sh` (+`_hf`/`_hg`。GPU ごとに 1 プロセス `--shard`、最後に `--merge`。HF は全 GPU を使う), `evaluate.sh` (+`_hf`/`_hg`)。train/evaluate は 1 GPU なので HG で投げる。`shells/train/`: `train.sh`, `lamar_hf.sh`, `lamar_hg.sh`
 - 既存の変更: `train.py` (wandb, 可視化), `scenealigner/training.py` (任意列 `rgb`/`camera_plan`/`camera_density`), `scenealigner/visualization.py`, `scenealigner/inference.py` (解像度を floorplan から取得。512 では不変)
 
 状態
