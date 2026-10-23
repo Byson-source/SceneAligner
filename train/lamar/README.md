@@ -160,9 +160,10 @@ qsub shells/train/lamar_hg.sh                                              # tra
 qsub -v CHECKPOINT=outputs/lamar_lamar_hge_rt_HG shells/lamar/evaluate_hg.sh  # val, then test
 ```
 
-`prepare.sh` runs one `prepare_lamar.py` per GPU of the node (`--shard i --num_shards n`, round robin over the
-windows, logs in `$DATA/shards/prepare_<i>.log`), then merges their CSV files (`--merge`): use `prepare_hf.sh` (a
-full node). `train.py` and `evaluate_lamar.py` use one GPU: `lamar_hg.sh` / `evaluate_hg.sh`.
+`prepare.sh` and `evaluate.sh` run one process per GPU of the node (`--shard i --num_shards n`, round robin over
+the windows; logs in `$DATA/shards/prepare_<i>.log` and `$OUT/<val|test>_results.shard<i>.log`), then merge their
+outputs (`--merge`; the seeds of the alignment depend on the window, not on the shard): `_hf` uses all the GPUs of
+a node, `_hg` one. `train.py` uses one GPU.
 
 `REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `NUM_GPUS`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
 `qsub -v`, e.g. `qsub -v DATA=data/lamar_hge,EPOCHS=4 shells/train/lamar_hf.sh`. The cached reconstructions of an

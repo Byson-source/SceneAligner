@@ -43,4 +43,6 @@ done
 for i in "${!pids[@]}"; do
     wait "${pids[$i]}" || { echo "shard $i failed: see $DATA/shards/prepare_$i.log"; exit 1; }
 done
-python train/lamar/prepare_lamar.py --merge --output "$DATA"
+if ((NUM_GPUS > 1)); then  # one process writes the CSV files itself
+    python train/lamar/prepare_lamar.py --merge --output "$DATA"
+fi

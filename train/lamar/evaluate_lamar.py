@@ -7,6 +7,8 @@ the random seeds 42 to 46.
     python train/lamar/evaluate_lamar.py ... --checkpoint_dir pre-trained          # DINOv3 without LoRA layers
     python train/lamar/evaluate_lamar.py ... --checkpoint_dir jhcho99/SceneAligner  # the LoRA layers trained on C3
     python train/lamar/evaluate_lamar.py ... --sessions val --seq_length 20 --seeds 42   # model selection
+    # on several GPUs: one process per GPU with --shard i --num_shards n (shells/lamar/evaluate.sh), then
+    python train/lamar/evaluate_lamar.py --merge --output <json> [--seq_length ...] [--seeds ...]
 """
 import argparse
 import json
@@ -82,10 +84,55 @@ def window_errors(alignment: dict, recon: dict, c2w: np.ndarray, plan_params: di
     return np.array(t_errs), np.array(r_errs)
 
 
+def summarize(records: list, seq_lengths: list, seeds: list) -> dict:
+    """
+    SR@1m and median errors per seed and length, and the mean SR@1m over the seeds, from the per-window records.
+    Args:
+        records (list): dicts {"L", "seed", "success", "failed", "t_errs", "r_errs"}, one per window and seed
+        seq_lengths (list): window lengths
+        seeds (list): seeds
+
+    Returns:
+        dict: "<seed>_<L>" -> {"success_10", "n_windows", "n_failed", "median_t_err_m", "median_r_err_deg"}, "mean" -> {L: SR}
+    """
+    results = {}
+    for L in seq_lengths:
+        for seed in seeds:
+            rec = [r for r in records if r["L"] == L and r["seed"] == seed]
+            t_errs, r_errs = sum((r["t_errs"] for r in rec), []), sum((r["r_errs"] for r in rec), [])
+            results[f"{seed}_{L}"] = {
+                "success_10": float(np.mean([r["success"] for r in rec])) if rec else float("nan"),
+                "n_windows": len(rec), "n_failed": sum(r["failed"] for r in rec),
+                "median_t_err_m": float(np.median(t_errs)) if t_errs else float("nan"),
+                "median_r_err_deg": float(np.median(r_errs)) if r_errs else float("nan"),
+            }
+    results["mean"] = {str(L): float(np.mean([results[f"{seed}_{L}"]["success_10"] for seed in seeds])) for L in seq_lengths}
+    return results
+
+
+def write_results(results: dict, seq_lengths: list, seeds: list, output: str) -> None:
+    """
+    Prints the table of SR@1m and writes the results (summarize) to a JSON file.
+    Args:
+        results (dict): of summarize
+        seq_lengths (list): window lengths
+        seeds (list): seeds
+        output (str): JSON file
+    """
+    print("length | seeds | SR@1m (%) | windows | median error (m)")
+    for L in seq_lengths:
+        rows = [results[f"{seed}_{L}"] for seed in seeds]
+        print(f"{L:6d} | {len(rows):5d} | {100 * results['mean'][str(L)]:9.1f} | {rows[0]['n_windows']:7d} | "
+              f"{np.mean([r['median_t_err_m'] for r in rows]):16.2f}")
+    os.makedirs(os.path.dirname(output) or ".", exist_ok=True)
+    with open(output, "w") as f:
+        json.dump(results, f, indent=2)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--map_dir", required=True, help="HGE/sessions/map")
-    parser.add_argument("--floorplan", required=True, help="hge.png")
+    parser.add_argument("--map_dir", help="HGE/sessions/map")
+    parser.add_argument("--floorplan", help="hge.png")
     parser.add_argument("--checkpoint_dir", default=MODEL_REPO, help='LoRA layers, or "pre-trained" for DINOv3')
     parser.add_argument("--dinov3_weights", default=None, help="Meta's DINOv3 ViT-B/16 weights")
     parser.add_argument("--split", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "split.yaml"))
@@ -99,7 +146,15 @@ def main():
     parser.add_argument("--recon_cache", default=None, help="directory of cached reconstructions (read and written)")
     parser.add_argument("--save_vis", action="store_true", help="saves the alignments of the first seed next to the output")
     parser.add_argument("--output", default="outputs/lamar_results.json")
+    parser.add_argument("--shard", type=int, default=0, help="this process evaluates the windows shard, shard + num_shards, ...")
+    parser.add_argument("--num_shards", type=int, default=1, help="processes (one per GPU); their records go to <output>.shard<i>.json")
+    parser.add_argument("--merge", action="store_true", help="only merges the records of the shards into the results")
     args = parser.parse_args()
+    shard_path = os.path.splitext(args.output)[0] + ".shard{}.json"
+    if args.merge:
+        records = sum((json.load(open(shard_path.format(i))) for i in range(args.num_shards)), [])
+        write_results(summarize(records, args.seq_length, args.seeds), args.seq_length, args.seeds, args.output)
+        return
 
     plan_img, plan_params = load_floorplan(args.floorplan, args.plan_size)
     model = load_model(args.checkpoint_dir, args.dinov3_weights)
@@ -118,55 +173,47 @@ def main():
             sessions[name] = session.subset(kept)
             print(f"{name}: {len(session)} frames, {len(kept)} evaluated")
 
-    results = {}
+    # Windows of all lengths and sessions; window_index (per length) seeds the alignment, whatever the shard
+    jobs = []
     for seq_length in args.seq_length:
-        records = {seed: {"success": [], "t_errs": [], "r_errs": [], "failed": 0} for seed in args.seeds}
         window_index = 0
         for name, session in sessions.items():
-            for window in tqdm(iter_test_windows(len(session), seq_length), desc=f"{name} L={seq_length}"):
-                frames = session.subset(np.arange(len(session))[window])
-                cache = os.path.join(args.recon_cache, f"{name}_L{seq_length}_s{window.start:05d}.npz") if args.recon_cache else None
-                if cache and os.path.exists(cache):
-                    recon = load_recon(cache)
-                else:
-                    recon = reconstruct(frames.image_paths, frames.K, frames.c2w, recon_model)
-                    if cache:
-                        save_recon(cache, recon)
-                for seed in args.seeds:  # the randomness of the alignment (query sampling, RANSAC), per window
-                    np.random.seed(seed * 1_000_000 + window_index)
-                    torch.manual_seed(seed * 1_000_000 + window_index)
-                    cv2.setRNGSeed(seed * 1_000_000 + window_index)
-                    alignment = align(recon, plan_img, model, args.ransac_thr)
-                    record = records[seed]
-                    if alignment is None:
-                        record["failed"] += 1
-                        record["success"].append(False)
-                        continue
-                    t_errs, r_errs = window_errors(alignment, recon, frames.c2w, plan_params)
-                    record["success"].append(bool(np.all(t_errs < SUCCESS_M)))
-                    record["t_errs"] += t_errs.tolist()
-                    record["r_errs"] += r_errs.tolist()
-                    if args.save_vis and seed == args.seeds[0]:
-                        image = draw_alignment(np.array(alignment["density_img"]), np.array(plan_img), alignment["M"], alignment["src_px"])
-                        Image.fromarray(image).save(os.path.join(vis_dir, f"{name}_L{seq_length}_s{window.start:05d}.png"))
+            for window in iter_test_windows(len(session), seq_length):
+                jobs.append((seq_length, window_index, name, window))
                 window_index += 1
-        for seed, record in records.items():
-            results[f"{seed}_{seq_length}"] = {
-                "success_10": float(np.mean(record["success"])) if record["success"] else float("nan"),
-                "n_windows": len(record["success"]), "n_failed": record["failed"],
-                "median_t_err_m": float(np.median(record["t_errs"])) if record["t_errs"] else float("nan"),
-                "median_r_err_deg": float(np.median(record["r_errs"])) if record["r_errs"] else float("nan"),
-            }
+    jobs = jobs[args.shard::args.num_shards]
 
-    results["mean"] = {str(L): float(np.mean([results[f"{seed}_{L}"]["success_10"] for seed in args.seeds])) for L in args.seq_length}
-    print("length | seeds | SR@1m (%) | windows | median error (m)")
-    for L in args.seq_length:
-        rows = [results[f"{seed}_{L}"] for seed in args.seeds]
-        print(f"{L:6d} | {len(rows):5d} | {100 * results['mean'][str(L)]:9.1f} | {rows[0]['n_windows']:7d} | "
-              f"{np.mean([r['median_t_err_m'] for r in rows]):16.2f}")
-    os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
-    with open(args.output, "w") as f:
-        json.dump(results, f, indent=2)
+    records = []
+    for seq_length, window_index, name, window in tqdm(jobs, desc=f"shard {args.shard}/{args.num_shards}"):
+        session = sessions[name]
+        frames = session.subset(np.arange(len(session))[window])
+        cache = os.path.join(args.recon_cache, f"{name}_L{seq_length}_s{window.start:05d}.npz") if args.recon_cache else None
+        if cache and os.path.exists(cache):
+            recon = load_recon(cache)
+        else:
+            recon = reconstruct(frames.image_paths, frames.K, frames.c2w, recon_model)
+            if cache:
+                save_recon(cache, recon)
+        for seed in args.seeds:  # the randomness of the alignment (query sampling, RANSAC), per window
+            np.random.seed(seed * 1_000_000 + window_index)
+            torch.manual_seed(seed * 1_000_000 + window_index)
+            cv2.setRNGSeed(seed * 1_000_000 + window_index)
+            alignment = align(recon, plan_img, model, args.ransac_thr)
+            record = {"L": seq_length, "seed": seed, "success": False, "failed": alignment is None, "t_errs": [], "r_errs": []}
+            if alignment is not None:
+                t_errs, r_errs = window_errors(alignment, recon, frames.c2w, plan_params)
+                record.update(success=bool(np.all(t_errs < SUCCESS_M)), t_errs=t_errs.tolist(), r_errs=r_errs.tolist())
+                if args.save_vis and seed == args.seeds[0]:
+                    image = draw_alignment(np.array(alignment["density_img"]), np.array(plan_img), alignment["M"], alignment["src_px"])
+                    Image.fromarray(image).save(os.path.join(vis_dir, f"{name}_L{seq_length}_s{window.start:05d}.png"))
+            records.append(record)
+
+    if args.num_shards > 1:
+        os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
+        with open(shard_path.format(args.shard), "w") as f:
+            json.dump(records, f)
+        return
+    write_results(summarize(records, args.seq_length, args.seeds), args.seq_length, args.seeds, args.output)
 
 
 if __name__ == "__main__":
