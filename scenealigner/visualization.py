@@ -104,23 +104,40 @@ def draw_colored_points(img, points, colors, radius=3):
     return canvas
 
 
-def draw_correspondence_rows(rgb, rows, density_img, plan_img, camera_px=None, camera_dir=None, margin_px=60):
-    """Rows of correspondences, each [photo | density map | floorplan cropped around all the points of the rows]: a
-    point has the same colour in the three images (the photo shows the points of the rows that have rgb_px).
+def draw_trajectory(img, points, color=(90, 90, 90), radius=2):
+    """Camera positions (N, 2) joined by a line."""
+    pts = np.round(points).astype(np.int32)
+    cv2.polylines(img, [pts.reshape(-1, 1, 2)], isClosed=False, color=color, thickness=1, lineType=cv2.LINE_AA)
+    for x, y in pts:
+        cv2.circle(img, (int(x), int(y)), radius, color, -1, lineType=cv2.LINE_AA)
+    return img
+
+
+def draw_correspondence_rows(rgb, rows, density_img, plan_img, camera_px=None, camera_dir=None, trajectory_density=None,
+                             trajectory_plan=None, margin_px=60):
+    """Rows of correspondences, each [photo | density map | floorplan cropped around all the points of the rows and
+    the trajectory]: a point has the same colour in the three images (the photo shows the points of the rows that
+    have rgb_px). The cameras of the window (trajectory, grey) are drawn on the density map and the floorplan.
 
     rgb: [H, W, 3] uint8; rows: dicts {"rgb_px" ([N, 2] or None), "density_px", "plan_px" ([N, 2] pixels), "colors"
     ([N, 3]), "label" (str)}; density_img, plan_img: [h, w(, 3)] uint8; camera_px, camera_dir: [2] position and
-    viewing direction of the camera on the floorplan, or None. Returns an RGB array.
+    viewing direction of the camera on the floorplan, or None; trajectory_density, trajectory_plan: [S, 2] or None.
+    Returns an RGB array.
     """
     H = rgb.shape[0]
     plan = plan_img if plan_img.ndim == 3 else np.repeat(plan_img[..., None], 3, axis=2)
-    anchors = np.vstack([row["plan_px"] for row in rows] + ([np.asarray(camera_px)[None]] if camera_px is not None else []))
+    anchors = np.vstack([row["plan_px"] for row in rows] + ([np.asarray(camera_px)[None]] if camera_px is not None else [])
+                        + ([np.asarray(trajectory_plan)] if trajectory_plan is not None else []))
     x0, y0 = np.maximum(np.floor(anchors.min(axis=0)).astype(int) - margin_px, 0)
     x1, y1 = np.minimum(np.ceil(anchors.max(axis=0)).astype(int) + margin_px, [plan.shape[1], plan.shape[0]])
     plan_zoom = H / (y1 - y0)  # crop scaled to the height of the photo
     plan_crop = cv2.resize(plan[y0:y1, x0:x1], (max(1, round((x1 - x0) * plan_zoom)), H), interpolation=cv2.INTER_AREA)
     density_zoom = H / density_img.shape[0]
     density = cv2.resize(density_img, (round(density_img.shape[1] * density_zoom), H), interpolation=cv2.INTER_AREA)
+    if trajectory_density is not None:
+        density = draw_trajectory(np.ascontiguousarray(density), np.asarray(trajectory_density) * density_zoom)
+    if trajectory_plan is not None:
+        plan_crop = draw_trajectory(np.ascontiguousarray(plan_crop), (np.asarray(trajectory_plan) - [x0, y0]) * plan_zoom)
 
     lines = []
     for row in rows:

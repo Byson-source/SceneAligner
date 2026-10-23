@@ -23,7 +23,7 @@ from lamar import load_floorplan, load_session, train_frames, world_to_plan_full
 from prepare_lamar import plan_correspondences, window_world  # noqa: E402
 from reconstruction import load_recon  # noqa: E402
 from prepare_lamar import DENSITY_SIZE, MAX_WALL_DIST_M  # noqa: E402
-from scenealigner.evaluation import process_gt_correspondences  # noqa: E402
+from scenealigner.evaluation import get_camera_center_on_density_px, process_gt_correspondences  # noqa: E402
 from scenealigner.inference import reconstruct_projection_geometry  # noqa: E402
 from scenealigner.training import render_training_map  # noqa: E402
 from scenealigner.visualization import draw_correspondence_rows, rainbow  # noqa: E402
@@ -157,6 +157,10 @@ def main():
             continue
         counts = {s: breakdown(corrs[s]["tensor_coords"], s, masks) for s in views}
         print(f"{name}: {fmt(sum(counts.values()), masks)} (height kept: {-ceil_m:.1f} m above to {floor_m:.1f} m below camera 0)")
+        trajectory_plan = world_to_plan_full(frames.c2w[:, :3, 3], plan_params["A"])  # pixels of hge.png
+        trajectory_density = get_camera_center_on_density_px(recon["extrinsics"], proj_params)
+        print(f"  density map: {DENSITY_SIZE / proj_params['scale']:.1f} m wide, trajectory "
+              f"{np.linalg.norm(np.diff(frames.c2w[:, :3, 3], axis=0), axis=1).sum():.1f} m long")
         frames_drawn = [f % length for f in args.frames] if args.frames else sorted(views, key=lambda s: -counts[s][-1])[:2]
         # Correspondences of the density map (as in the training data, all of them): per frame, then the window
         per_view = {s: view_points(corrs[s]["tensor_coords"], s, world, recon, proj_params, proj_mask, plan_params) for s in views}
@@ -174,7 +178,7 @@ def main():
             camera_px = world_to_plan_full(c2w[:3, 3], plan_params["A"])
             camera_dir = world_to_plan_full(c2w[:3, 3] + c2w[:3, 2], plan_params["A"]) - camera_px  # optical axis
             image = draw_correspondence_rows(recon["preprocessed_images"][s], [frame_row, window_row], density_img, plan_full,
-                                             camera_px, camera_dir)
+                                             camera_px, camera_dir, trajectory_density, trajectory_plan)
             Image.fromarray(image).save(os.path.join(args.output, f"{name}_f{s:03d}.png"))
 
 
