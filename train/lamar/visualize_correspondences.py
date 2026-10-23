@@ -1,5 +1,5 @@
 """Correspondences of the training data of prepare_lamar.py drawn on the photo, the density map and the floorplan:
-the pixels of a frame whose reconstructed points lie inside the floorplan (prepare_lamar.py), these points on the density map of one MapAnything
+the pixels of a frame whose reconstructed points lie on walls of the floorplan (prepare_lamar.py), these points on the density map of one MapAnything
 sample (--conf, --xz, gamma 0.5) and on hge.png (full resolution, cropped around them). A point keeps one of seven
 colours in the three images (from the left to the right of the photo). Only the points of the density map are drawn.
 Reads the reconstructions cached by prepare_lamar.py (--recon_cache): no GPU.
@@ -20,13 +20,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lamar import load_floorplan, load_session, train_frames, world_to_plan_full  # noqa: E402
 from prepare_lamar import plan_correspondences, window_world  # noqa: E402
 from reconstruction import load_recon  # noqa: E402
-from prepare_lamar import DENSITY_SIZE  # noqa: E402
+from prepare_lamar import DENSITY_SIZE, MAX_WALL_DIST_M  # noqa: E402
 from scenealigner.evaluation import process_gt_correspondences  # noqa: E402
 from scenealigner.inference import reconstruct_projection_geometry  # noqa: E402
 from scenealigner.training import render_training_map  # noqa: E402
 from scenealigner.visualization import draw_rgb_plan_correspondences  # noqa: E402
 
-WINDOW_NAME = re.compile(r"(?P<session>.+)_s(?P<start>\d{5})_L(?P<length>\d+)$")  # prepare_lamar.main
+WINDOW_NAME = re.compile(r"(?P<session>.+)_t(?P<timestamp>\d+)_L(?P<length>\d+)_k(?P<step>\d+)$")  # lamar.window_name
 
 
 def filter_masks(recon: dict, R_rect: np.ndarray, conf_percent: float, xz_slice_val: float) -> tuple[dict, tuple]:
@@ -62,15 +62,15 @@ def breakdown(tc: np.ndarray, s: int, masks: dict) -> np.ndarray:
         masks (dict): of filter_masks
 
     Returns:
-        np.ndarray: counts with shape [1 + len(masks)] (plan, conf, height, xz)
+        np.ndarray: counts with shape [1 + len(masks)] (wall, conf, height, xz)
     """
     u, v = tc[:, 0].astype(int), tc[:, 1].astype(int)
     return np.array([len(tc)] + [masks[k][s, v, u].sum() for k in masks])
 
 
 def fmt(counts: np.ndarray, masks: dict) -> str:
-    """Counts of breakdown as "plan 164 > conf 120 > height 17 > xz 17"."""
-    return " > ".join(f"{k} {n}" for k, n in zip(["plan", *masks], counts))
+    """Counts of breakdown as "wall 164 > conf 120 > height 17 > xz 17"."""
+    return " > ".join(f"{k} {n}" for k, n in zip(["wall", *masks], counts))
 
 
 def main():
@@ -80,7 +80,7 @@ def main():
     parser.add_argument("--floorplan", required=True, help="hge.png")
     parser.add_argument("--recon_cache", required=True, help="reconstructions cached by prepare_lamar.py")
     parser.add_argument("--output", required=True)
-    parser.add_argument("--windows", nargs="+", default=None, help="window names (<session>_s<start>_L<length>); default: random")
+    parser.add_argument("--windows", nargs="+", default=None, help="window names (lamar.window_name); default: random")
     parser.add_argument("--num_windows", type=int, default=10, help="random windows of the cache without --windows")
     parser.add_argument("--frames", type=int, nargs="+", default=None,
                         help="frames of a window (indices, -1: last); default: the 2 with most points on the density map")
@@ -88,9 +88,8 @@ def main():
     parser.add_argument("--conf", type=float, default=45, help="confidence threshold of the density map (percentile)")
     parser.add_argument("--xz", type=float, default=2.5, help="x/z slice of the density map")
     parser.add_argument("--plan_source", default="recon", choices=["recon", "lidar"])
-    parser.add_argument("--no_lidar_gate", action="store_true")
     parser.add_argument("--max_points", type=int, default=20000, help="as prepare_lamar.py")
-    parser.add_argument("--max_wall_dist", type=float, default=None, help="as prepare_lamar.py")
+    parser.add_argument("--max_wall_dist", type=float, default=MAX_WALL_DIST_M, help="as prepare_lamar.py")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -99,24 +98,25 @@ def main():
     plan_full = np.array(Image.open(args.floorplan).convert("RGB"))
     windows = args.windows
     if windows is None:
-        cached = sorted(p.stem for p in Path(args.recon_cache).glob("*.npz"))
+        cached = sorted(p.stem for p in Path(args.recon_cache).glob("*.npz") if WINDOW_NAME.match(p.stem))
         windows = [cached[i] for i in sorted(rng.choice(len(cached), min(args.num_windows, len(cached)), replace=False))]
     os.makedirs(args.output, exist_ok=True)
 
     sessions = {}
     for name in windows:
         match = WINDOW_NAME.match(name)
-        session_name, start, length = match["session"], int(match["start"]), int(match["length"])
+        session_name, length, step = match["session"], int(match["length"]), int(match["step"])
         if session_name not in sessions:
             session = load_session(args.map_dir, args.raw_dir, session_name)
             sessions[session_name] = session.subset(train_frames(session, plan_params))
-        frames = sessions[session_name].subset(np.arange(start, start + length))
+        start = int(np.searchsorted(sessions[session_name].timestamps, int(match["timestamp"])))
+        frames = sessions[session_name].subset(start + step * np.arange(length))
         recon = load_recon(os.path.join(args.recon_cache, f"{name}.npz"))
-        world, _ = window_world(frames, recon, args.plan_source, not args.no_lidar_gate)
+        world, _ = window_world(frames, recon, args.plan_source)
         if world is None:
             print(f"{name}: no LiDAR")
             continue
-        corrs = plan_correspondences(world, plan_params, args.max_points, rng, args.max_wall_dist)
+        corrs = plan_correspondences(world, plan_params, args.max_points, rng, None if args.max_wall_dist < 0 else args.max_wall_dist)
         proj_params, points, proj_mask = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"],
                                                                          args.conf, args.xz, density_size=DENSITY_SIZE)
         density_img = np.array(render_training_map(points, proj_params, 0.5).convert("RGB"))

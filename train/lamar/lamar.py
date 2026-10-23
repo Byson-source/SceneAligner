@@ -25,6 +25,7 @@ PLAN_FULL_SIZE = (3278, 2334)  # (width, height) of hge.png
 METRES_PER_PIXEL = 0.055  # of hge.png, the value Z-FLoc uses for its errors (the affine below gives 0.0546)
 GRAVITY_WORLD = np.array([0.0, 0.0, -1.0])  # the world frame of LaMAR is z-up
 SEQ_LENGTHS = (15, 20, 35, 50, 100)  # window lengths of the Z-FLoc evaluation
+TRAIN_STEPS = (1, 2, 4)  # frame intervals of the training windows (C3 reconstructs unordered photo collections)
 DEPTH_SCALE = 1000.0  # LaMAR depth maps: 16-bit PNG in millimetres
 HGE_INTRINSICS = np.array([[1596.080444, 0.0, 716.836365], [0.0, 1596.080444, 939.086121], [0.0, 0.0, 1.0]])  # of the 1440 x 1920 photos (Z-FLoc)
 
@@ -379,20 +380,6 @@ def is_indoor(timestamps: np.ndarray) -> np.ndarray:
     return indoor
 
 
-def camera_height_ok(c2w: np.ndarray, tol_m: float = 1.5) -> np.ndarray:
-    """
-    Frames on the main floor: camera height within tol_m of the median height (removes stairwells).
-    Args:
-        c2w (np.ndarray): tensor with shape [N, 4, 4]
-        tol_m (float): tolerance [m]
-
-    Returns:
-        np.ndarray: boolean tensor with shape [N]
-    """
-    heights = c2w[:, 2, 3]
-    return np.abs(heights - np.median(heights)) <= tol_m
-
-
 def kept_indices(num_frames: int, shift: list) -> np.ndarray:
     """
     Frames of a test session kept by the Z-FLoc index shift, in order.
@@ -459,27 +446,45 @@ def iter_test_windows(num_kept: int, seq_length: int) -> list[slice]:
     return [slice(k * seq_length, (k + 1) * seq_length) for k in range(num_kept // seq_length)]
 
 
-def iter_train_windows(timestamps: np.ndarray, lengths: tuple = SEQ_LENGTHS, stride_frac: float = 0.5,
-                       max_gap_s: float = 5.0) -> list[tuple[int, int]]:
+def iter_train_windows(timestamps: np.ndarray, lengths: tuple = SEQ_LENGTHS, steps: tuple = TRAIN_STEPS,
+                       stride_frac: float = 0.5, max_gap_s: float = 5.0) -> list[tuple[int, int, int]]:
     """
-    Training windows of consecutive frames: every length, starts every stride_frac * length frames, without
-    windows that span a gap of the timestamps (the frames dropped by the filters).
+    Training windows: length frames taken every step kept frames, for every length and step, starting every
+    stride_frac of the span, without windows across a gap of the timestamps (the frames dropped by the filters).
     Args:
         timestamps (np.ndarray): integer tensor with shape [N], microseconds of the kept frames, increasing
-        lengths (tuple): window lengths
-        stride_frac (float): stride between the starts, as a fraction of the length
-        max_gap_s (float): largest gap between consecutive frames of a window [s]
+        lengths (tuple): window lengths (frames)
+        steps (tuple): intervals between the frames of a window (1: consecutive)
+        stride_frac (float): stride between the starts, as a fraction of the span step * length
+        max_gap_s (float): largest gap between consecutive kept frames inside a window [s]
 
     Returns:
-        list[tuple[int, int]]: (start, length) pairs
+        list[tuple[int, int, int]]: (start, length, step); the window holds kept frames start + step * arange(length)
     """
     gaps = np.diff(timestamps) / 1e6 > max_gap_s  # [N - 1], gap after frame i
     windows = []
-    for length in lengths:
-        for start in range(0, len(timestamps) - length + 1, max(1, int(length * stride_frac))):
-            if not gaps[start:start + length - 1].any():
-                windows.append((start, length))
+    for step in steps:
+        for length in lengths:
+            span = step * (length - 1) + 1  # kept frames from the first to the last of the window
+            for start in range(0, len(timestamps) - span + 1, max(1, int(step * length * stride_frac))):
+                if not gaps[start:start + span - 1].any():
+                    windows.append((start, length, step))
     return windows
+
+
+def window_name(session: str, first_timestamp: int, length: int, step: int) -> str:
+    """
+    Name of a training window (files and cached reconstructions), by the timestamp of its first frame.
+    Args:
+        session (str): session name
+        first_timestamp (int): microseconds
+        length (int): frames
+        step (int): interval between the frames
+
+    Returns:
+        str: "<session>_t<timestamp>_L<length>_k<step>"
+    """
+    return f"{session}_t{first_timestamp}_L{length}_k{step}"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -746,7 +751,7 @@ def load_session(map_dir: str | Path, raw_dir: str | Path | None, session: str) 
 
 def train_frames(session: Session, plan_params: dict) -> np.ndarray:
     """
-    Frames of a training session: indoor (UnLoc intervals), inside the floorplan and on the main floor.
+    Frames of a training session: indoor (UnLoc intervals) and inside the floorplan.
     Args:
         session (Session): all frames
         plan_params (dict): of load_floorplan
@@ -755,7 +760,6 @@ def train_frames(session: Session, plan_params: dict) -> np.ndarray:
         np.ndarray: integer tensor with shape [K], increasing frame indices
     """
     keep = is_indoor(session.timestamps) & in_bounds(world_to_plan_full(session.c2w[:, :3, 3], plan_params["A"]))
-    keep &= camera_height_ok(session.c2w)
     return np.nonzero(keep)[0]
 
 

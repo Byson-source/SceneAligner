@@ -25,8 +25,8 @@ from lamar import (METRES_PER_PIXEL, SEQ_LENGTHS, iter_test_windows, load_floorp
                    test_frames, train_frames, world_to_plan)
 from reconstruction import load_mapanything, load_recon, reconstruct, save_recon  # noqa: E402
 from scenealigner.evaluation import compute_pose_error_analytic, get_camera_center_on_density_px  # noqa: E402
-from scenealigner.inference import (MODEL_REPO, estimate_correspondences, load_model, reconstruct_projection_geometry,  # noqa: E402
-                                    render_density_map)
+from scenealigner.inference import (EVAL_IMG_RES, MODEL_REPO, estimate_correspondences, load_model,  # noqa: E402
+                                    reconstruct_projection_geometry, render_density_map)
 from scenealigner.visualization import draw_alignment  # noqa: E402
 
 SEEDS = (42, 43, 44, 45, 46)
@@ -36,8 +36,9 @@ SUCCESS_M = 1.0
 
 def align(recon: dict, plan_img: Image.Image, model, ransac_thr: float) -> dict | None:
     """
-    Alignment of a reconstruction to the floorplan (scenealigner.inference.align_to_floorplan), or None when RANSAC
-    finds no similarity transform (the window counts as a failure, as in Z-FLoc).
+    Alignment of a reconstruction to the floorplan (scenealigner.inference.align_to_floorplan, with a 512 px density
+    map as for C3 and the training data), or None when RANSAC finds no similarity transform (the window counts as a
+    failure, as in Z-FLoc).
     Args:
         recon (dict): of reconstruction.reconstruct
         plan_img (Image.Image): square floorplan
@@ -48,7 +49,7 @@ def align(recon: dict, plan_img: Image.Image, model, ransac_thr: float) -> dict 
         dict | None: "proj_params", "density_img", "src_px", "dst_px", "M" (density map px -> floorplan px)
     """
     proj_params, points, _ = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"],
-                                                             density_size=plan_img.size[0])
+                                                             density_size=EVAL_IMG_RES)
     density_img = render_density_map(points, proj_params)
     src_px, dst_px = estimate_correspondences(model, density_img, plan_img)
     M, _ = cv2.estimateAffinePartial2D(src_px, dst_px, method=cv2.RANSAC, ransacReprojThreshold=ransac_thr * plan_img.size[0])
@@ -89,7 +90,7 @@ def main():
     parser.add_argument("--dinov3_weights", default=None, help="Meta's DINOv3 ViT-B/16 weights")
     parser.add_argument("--split", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "split.yaml"))
     parser.add_argument("--sessions", nargs="+", default=["test"], help="splits (test, val) or session names")
-    parser.add_argument("--plan_size", type=int, default=1024, help="resolution of the floorplan and the density maps")
+    parser.add_argument("--plan_size", type=int, default=1024, help="resolution of the floorplan (density maps: 512)")
     parser.add_argument("--seq_length", type=int, nargs="+", default=list(SEQ_LENGTHS), help="window lengths")
     parser.add_argument("--seeds", type=int, nargs="+", default=list(SEEDS))
     parser.add_argument("--ransac_thr", type=float, default=0.04, help="RANSAC threshold, fraction of the floorplan resolution")

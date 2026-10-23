@@ -18,7 +18,7 @@ from functools import partial
 import numpy as np
 import torch
 import torch.nn.functional as F
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, load_peft_weights, set_peft_model_state_dict
 from PIL import Image
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -149,11 +149,20 @@ def main():
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-4)
 
     os.makedirs(os.path.join(args.output, "vis"), exist_ok=True)
-    log = csv.writer(open(os.path.join(args.output, "log.csv"), "w", buffering=1))
+    # Resume after the last completed epoch (LoRA layers, optimizer, step), e.g. when a job reaches its walltime
+    state_path = os.path.join(args.output, "state.pt")
+    first_epoch, step = 0, 0
+    if os.path.exists(state_path):
+        state = torch.load(state_path, weights_only=True)
+        set_peft_model_state_dict(model, load_peft_weights(args.output))
+        optimizer.load_state_dict(state["optimizer"])
+        first_epoch, step = state["epoch"] + 1, state["step"]
+        print(f"resumed after epoch {first_epoch} (step {step})")
     columns = ("feat", "regr", "geo", "topo", "acc", "chance")
-    log.writerow(["step", "loss", *columns])
-    step = 0
-    for epoch in range(args.epochs):
+    log = csv.writer(open(os.path.join(args.output, "log.csv"), "a" if first_epoch else "w", buffering=1))
+    if not first_epoch:
+        log.writerow(["step", "loss", *columns])
+    for epoch in range(first_epoch, args.epochs):
         for batch in tqdm(loader, desc=f"epoch {epoch + 1}/{args.epochs}"):
             optimizer.zero_grad()
             loss, losses, pred = compute_loss(model, batch, step, total_steps, args.negatives)
@@ -171,6 +180,7 @@ def main():
                 if wandb:
                     wandb.log({"sample": wandb.Image(image, caption=f"step {step}: {batch['scene_id'][0]}")}, step=step)
         model.save_pretrained(args.output)
+        torch.save({"epoch": epoch, "step": step, "optimizer": optimizer.state_dict()}, state_path)
 
 
 if __name__ == "__main__":

@@ -4,16 +4,26 @@ SceneAligner trained on the phone sequences of the HGE building of [LaMAR](https
 train/test split of [UnLoc](https://github.com/matthias-wueest/UnLoc) and the evaluation protocol of Z-FLoc, so
 that the three methods compare on the same windows of frames.
 
-Differences from the C3 pipeline:
-- The reconstruction is [MapAnything](https://github.com/facebookresearch/map-anything), given the photos, their
-  intrinsics and their ground-truth relative poses (`reconstruction.py`). The gravity direction comes from the pose
-  of the first frame (the LaMAR world frame is z-up): GeoCalib is not used.
-- Every training sample is a window of consecutive frames (15 to 100, like the evaluation windows). The
-  correspondences are not annotated: the reconstructed points are placed in the world with the ground-truth pose
-  of the first camera and on the floorplan with its affine transform; all those inside the floorplan are the
-  correspondences (`prepare_lamar.py`), as the annotated correspondences of C3 are not restricted to walls. The LiDAR depth maps of the phone give a second density map per window.
-- The floorplan is stored at 1024 px instead of 512 (see Resolution).
-- `train.py` logs to Weights & Biases (`--wandb_project`) and saves a visualization every `--vis_every` steps.
+The training data follow those of SceneAligner: `prepare_c3.py` (in the wild) as the base, and `prepare_s3d.py`
+(Structured3D, in the upstream repository [Cornell-VAILab/SceneAligner](https://github.com/Cornell-VAILab/SceneAligner),
+removed from this fork) where correspondences come from ground-truth geometry instead of annotations:
+
+| | C3 (`prepare_c3.py`) | Structured3D (`prepare_s3d.py`) | LaMAR HGE (`prepare_lamar.py`) |
+|---|---|---|---|
+| reconstruction | pi3 / VGGT, 50 to 150 photos, or one | pi3, one view | MapAnything with ground-truth intrinsics and relative poses, windows of 15 to 100 frames, every 1st, 2nd or 4th frame |
+| gravity | GeoCalib | GeoCalib | ground-truth pose (z-up world) |
+| reconstruction samples | conf 30/45/60/75/90 x x/z 0/2.5/5 x gamma 0.25/0.5/0.75/1 | conf 45, x/z 2.5, gamma 0.5 | as C3 |
+| ground-truth geometry samples | - | density map of the ground-truth depth | density map of the LiDAR depth maps |
+| correspondences | annotated | ground-truth points on walls (dark pixels of the 512 px plan) | points within 0.5 m of a wall of hge.png |
+| minimum correspondences | 8 per photo | 10 per sample | 8 per frame, 10 per LiDAR sample |
+| consistency test | RANSAC similarity, 10 px of 512 | - | as C3 (reconstruction samples) |
+| floorplan | 512 px | 512 px | 1024 px, walls thickened to 0.5 m (1-3 px lines in hge.png) |
+| `train.py` | defaults | `--epochs 20 --resolutions 512 --min_points 1000` | `--epochs 20 --resolutions 1024 --min_points 1000 --negatives batch --plan_grid 8` |
+
+The 0.5 m wall tolerance covers the error of the affine transform (about 0.25 m); a first version with 0.2 m lost
+most far walls. `--negatives batch` and `--plan_grid 8` are the only additions to the training of SceneAligner (see
+Training). `train.py` also logs to Weights & Biases (`--wandb_project`), saves a visualization every
+`--vis_every` steps and resumes after the last completed epoch.
 
 ## Data
 
@@ -40,7 +50,7 @@ Differences from the C3 pipeline:
 - World to floorplan: the affine transform fitted on four building entrances by UnLoc (Appendix A.1.2), as in
   Z-FLoc: about 18.3 px/m (0.0546 m/px), with a reflection. Errors are converted with 0.055 m/px, the value Z-FLoc
   uses. The fit residual at the entrances is 4 to 5 px (about 0.25 m).
-- Training frames: the indoor intervals of UnLoc, inside the floorplan, within 1.5 m of the median camera height.
+- Training frames: the indoor intervals of UnLoc, inside the floorplan.
   Test frames: the index shift of Z-FLoc (`HGE_INDEX_SHIFT` in `lamar.py`). For `ios_2022-01-18_17.10.39_000` the
   shift keeps 516 frames while Z-FLoc evaluates 483: pass `--zfloc_npz <z-floc>/assets/metadata/hge.npz` to
   evaluate exactly the frames of Z-FLoc (they are matched to the bundled ground-truth positions).
@@ -75,24 +85,23 @@ python train/lamar/prepare_lamar.py --map_dir <LAMAR_ROOT>/HGE/sessions/map --ra
     --floorplan <LAMAR_ROOT>/hge.png --output <data> --recon_cache <data>/recon_cache
 ```
 
-For every train session, windows of 15, 20, 35, 50 and 100 consecutive frames (stride: half the length, no window
-across a gap of the kept frames) are reconstructed with MapAnything. Each window gives:
-- `mapanything/`: density maps of the reconstruction for two confidence thresholds (`--conf 45 75`), three x/z
-  slices and four gammas, with correspondences from the reconstructed points inside the floorplan
-  (`--max_wall_dist <m>` keeps only those near walls; a first version kept 0.2 m, which dropped most far walls
-  through the reconstruction and affine errors). Where the LiDAR is valid,
-  points farther than 10 % (or 0.3 m) from it are left out (`--no_lidar_gate` keeps them). `--plan_source lidar`
-  takes the LiDAR points instead, as the Structured3D training of the paper does with the ground-truth depth.
-- `lidar/`: density maps of the LiDAR points, seen from above in the gravity-aligned frame of the first camera.
+For every train session, windows of 15, 20, 35, 50 and 100 frames, taken every 1st, 2nd or 4th kept frame
+(`--steps 1 2 4`: wider views, as the photo collections of C3; starts every half span; no window across a gap of
+more than 5 s of the kept frames), are reconstructed with MapAnything and cached as
+`<session>_t<first timestamp>_L<length>_k<step>.npz`. Each window gives:
+- `mapanything/`: density maps of the reconstruction for the confidence thresholds, x/z slices and gammas of
+  `prepare_c3.py`, with the correspondences of the frames that have at least 8 of them, kept if they agree with a
+  similarity transform. `--plan_source lidar` places the correspondences with the LiDAR points instead of the
+  reconstructed ones (as `prepare_s3d.py` does with the ground-truth depth).
+- `lidar/`: one density map of the LiDAR points (gamma 0.5), seen from above in the gravity-aligned frame of the
+  first camera, as `prepare_s3d.depth_sample`, if it has at least 10 correspondences.
 
-Samples with fewer than `--min_correspondences 200` points, or whose correspondences do not agree with a
-similarity transform, are dropped. The CSV columns `rgb`, `camera_plan` and `camera_density` (the photo and the
-position of the last camera) are only used by the visualizations of `train.py`. All windows share the floorplan,
-so `scene_id` is `hge` for all of them (only the points of a sample are its negatives in the feature matching
-loss); `--scene_id cell` names 20 m cells instead, so that windows of different cells are negatives of each other.
+The CSV columns `rgb`, `camera_plan` and `camera_density` (the photo and the position of the last camera) are only
+used by the visualizations of `train.py`. All windows share the floorplan, so `scene_id` is `hge` for all of them;
+`--scene_id cell` names 20 m cells instead.
 
 To look at the correspondences, `visualize_correspondences.py` draws, for random windows of the cache (or
-`--windows <name>`), the pixels of a frame whose points lie inside the floorplan, these points on a density map (`--conf`,
+`--windows <name>`), the pixels of a frame whose points lie on walls, these points on a density map (`--conf`,
 `--xz`) and on hge.png (cropped around them, the camera in blue), in seven colours from the left (red) to the right
 (violet) of the photo. It reads
 `recon_cache` and needs no GPU:
@@ -105,14 +114,15 @@ python train/lamar/visualize_correspondences.py --map_dir <LAMAR_ROOT>/HGE/sessi
 ## Training
 
 ```bash
-python train.py --data <data> --output <run> --epochs 2 --resolutions 1024 1280 --min_points 1000 \
+python train.py --data <data> --output <run> --epochs 20 --resolutions 1024 --min_points 1000 \
     --negatives batch --plan_grid 8 --wandb_project scenealigner-lamar --wandb_name <run>
 ```
 
 Every 100 steps the losses go to `log.csv` and wandb; every `--vis_every` 500 steps, `<run>/vis/<step>.png` and
 the wandb panel `sample` show the floorplan of the first sample of the batch with the ground-truth (green) and
 predicted (orange) correspondences, the ground-truth (blue) and estimated (red) position of the last camera, next
-to its photo. `--min_points 1000` keeps the random crops (a sample has 200 to 20000 correspondences).
+to its photo. If `<run>/state.pt` exists, the training resumes after the last completed epoch (resubmit the job
+when it reaches its walltime).
 
 The points of a window lie in a few patches of the building plan (1 patch = 2.8 m at 1024 px), so their floorplan
 descriptors are almost equal and, with only the points of the sample as negatives, the feature matching loss stays
@@ -151,12 +161,14 @@ qsub -v CHECKPOINT=outputs/lamar_lamar_hge_rt_HG shells/lamar/evaluate_hg.sh  # 
 ```
 
 `REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
-`qsub -v`, e.g. `qsub -v DATA=data/lamar_hge,EPOCHS=4 shells/train/lamar_hf.sh`.
+`qsub -v`, e.g. `qsub -v DATA=data/lamar_hge,EPOCHS=4 shells/train/lamar_hf.sh`. The cached reconstructions of an
+older version (`<session>_s<start>_L<length>.npz`, indexed by the frames of other filters) are not used and can be deleted.
 
 ## Resolution
 
-The floorplan and the density maps are given to DINOv3 as square images of `--plan_size` pixels (default 1024;
-`train.py --resolutions 1024 1280`). The original plan (3278 px) cannot be used: ViT-B/16 would see about 42k
+The floorplan is given to DINOv3 as a square image of `--plan_size` pixels (default 1024; `train.py --resolutions
+1024`, as Structured3D trains at the resolution of its floorplans); the density maps are rendered at 512 px, as for
+C3, for training and evaluation. The original plan (3278 px) cannot be used: ViT-B/16 would see about 42k
 tokens, and the LoRA layers are trained at 512 to 1280 px. SceneAligner resizes the C3 floorplans to 512 px, but
 HGE is a whole building (179 m x 127 m): at 512 px, 1 px = 0.35 m and 1 m = 2.9 px, too coarse for SR@1m; at
 1024 px, 1 px = 0.175 m and 1 m = 5.7 px (a 16 px patch covers 2.8 m). The resolution only changes the precision of
