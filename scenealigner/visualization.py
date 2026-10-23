@@ -90,7 +90,12 @@ def draw_training_sample(plan_img, pts_plan_gt, pts_plan_pred, valid, camera_pla
 RAINBOW = ((230, 0, 0), (255, 140, 0), (240, 220, 0), (0, 170, 0), (0, 90, 255), (75, 0, 160), (180, 0, 220))  # 7 colours
 
 
-def draw_colored_points(img, points, colors, radius=4):
+def rainbow(values):
+    """Colours (N, 3) of values in [0, 1]: seven bins from red (0) to violet (1)."""
+    return np.array(RAINBOW)[np.clip((np.asarray(values) * len(RAINBOW)).astype(int), 0, len(RAINBOW) - 1)]
+
+
+def draw_colored_points(img, points, colors, radius=3):
     """Points with a black outline, one colour each."""
     canvas = np.ascontiguousarray(img.copy())
     for (x, y), color in zip(np.round(points).astype(int), colors):
@@ -99,35 +104,37 @@ def draw_colored_points(img, points, colors, radius=4):
     return canvas
 
 
-def draw_rgb_plan_correspondences(rgb, rgb_px, plan_img, plan_px, camera_px=None, camera_dir=None, density_img=None,
-                                  density_px=None, margin_px=60):
-    """Correspondences of a photo with the floorplan (and the density map): the photo with its pixels, the density
-    map with their points, and the floorplan cropped around them. A point keeps one of seven colours in every
-    image, from red (left of the photo) to violet (right). Returns an RGB array, the images side by side.
+def draw_correspondence_rows(rgb, rows, density_img, plan_img, camera_px=None, camera_dir=None, margin_px=60):
+    """Rows of correspondences, each [photo | density map | floorplan cropped around all the points of the rows]: a
+    point has the same colour in the three images (the photo shows the points of the rows that have rgb_px).
 
-    rgb: [H, W, 3] uint8; rgb_px, plan_px, density_px: [N, 2] (u, v) pixels; plan_img, density_img: [h, w(, 3)] uint8;
-    camera_px, camera_dir: [2] position and viewing direction of the camera on the floorplan, or None.
+    rgb: [H, W, 3] uint8; rows: dicts {"rgb_px" ([N, 2] or None), "density_px", "plan_px" ([N, 2] pixels), "colors"
+    ([N, 3]), "label" (str)}; density_img, plan_img: [h, w(, 3)] uint8; camera_px, camera_dir: [2] position and
+    viewing direction of the camera on the floorplan, or None. Returns an RGB array.
     """
-    colors = np.array(RAINBOW)[np.clip((rgb_px[:, 0] / rgb.shape[1] * len(RAINBOW)).astype(int), 0, len(RAINBOW) - 1)]
     H = rgb.shape[0]
-    panels = [draw_colored_points(rgb, rgb_px, colors)]
-    if density_img is not None:
-        zoom = H / density_img.shape[0]
-        density = cv2.resize(density_img, (round(density_img.shape[1] * zoom), H), interpolation=cv2.INTER_AREA)
-        panels.append(draw_colored_points(density, np.asarray(density_px) * zoom, colors))
-
     plan = plan_img if plan_img.ndim == 3 else np.repeat(plan_img[..., None], 3, axis=2)
-    anchors = plan_px if camera_px is None else np.vstack([plan_px, camera_px])
+    anchors = np.vstack([row["plan_px"] for row in rows] + ([np.asarray(camera_px)[None]] if camera_px is not None else []))
     x0, y0 = np.maximum(np.floor(anchors.min(axis=0)).astype(int) - margin_px, 0)
     x1, y1 = np.minimum(np.ceil(anchors.max(axis=0)).astype(int) + margin_px, [plan.shape[1], plan.shape[0]])
-    zoom = H / (y1 - y0)  # crop scaled to the height of the photo
-    crop = cv2.resize(plan[y0:y1, x0:x1], (max(1, round((x1 - x0) * zoom)), H), interpolation=cv2.INTER_AREA)
-    crop = draw_colored_points(crop, (plan_px - [x0, y0]) * zoom, colors)
-    if camera_px is not None:
-        center = (np.asarray(camera_px) - [x0, y0]) * zoom
-        if camera_dir is not None:
-            draw_camera_frustum(crop, center, np.asarray(camera_dir, dtype=np.float64), BLUE, length=40, width=30)
-        cv2.circle(crop, tuple(int(v) for v in np.round(center)), 6, BLUE, -1, lineType=cv2.LINE_AA)
-    panels.append(crop)
-    gap = np.full((H, 8, 3), 255, dtype=np.uint8)
-    return np.hstack([x for panel in panels for x in (panel, gap)][:-1])
+    plan_zoom = H / (y1 - y0)  # crop scaled to the height of the photo
+    plan_crop = cv2.resize(plan[y0:y1, x0:x1], (max(1, round((x1 - x0) * plan_zoom)), H), interpolation=cv2.INTER_AREA)
+    density_zoom = H / density_img.shape[0]
+    density = cv2.resize(density_img, (round(density_img.shape[1] * density_zoom), H), interpolation=cv2.INTER_AREA)
+
+    lines = []
+    for row in rows:
+        photo = rgb if row["rgb_px"] is None else draw_colored_points(rgb, row["rgb_px"], row["colors"])
+        crop = draw_colored_points(plan_crop, (row["plan_px"] - [x0, y0]) * plan_zoom, row["colors"])
+        if camera_px is not None:
+            center = (np.asarray(camera_px) - [x0, y0]) * plan_zoom
+            if camera_dir is not None:
+                draw_camera_frustum(crop, center, np.asarray(camera_dir, dtype=np.float64), BLUE, length=40, width=30)
+            cv2.circle(crop, tuple(int(v) for v in np.round(center)), 6, BLUE, -1, lineType=cv2.LINE_AA)
+        panels = [photo, draw_colored_points(density, np.asarray(row["density_px"]) * density_zoom, row["colors"]), crop]
+        line = np.hstack([x for panel in panels for x in (panel, np.full((H, 8, 3), 255, dtype=np.uint8))][:-1])
+        cv2.putText(line, row["label"], (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 4, cv2.LINE_AA)
+        cv2.putText(line, row["label"], (8, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+        lines.append(line)
+    gap = np.full((8, lines[0].shape[1], 3), 255, dtype=np.uint8)
+    return np.vstack([x for line in lines for x in (line, gap)][:-1])
