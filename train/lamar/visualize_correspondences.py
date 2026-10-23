@@ -108,6 +108,8 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--windows", nargs="+", default=None, help="window names (lamar.window_name); default: random")
     parser.add_argument("--num_windows", type=int, default=10, help="random windows of the cache without --windows")
+    parser.add_argument("--lengths", type=int, nargs="+", default=None, help="only random windows of these lengths (e.g. 15 100)")
+    parser.add_argument("--steps", type=int, nargs="+", default=None, help="only random windows of these frame intervals (1 2 4)")
     parser.add_argument("--frames", type=int, nargs="+", default=None,
                         help="frames of a window (indices, -1: last); default: the 2 with most points on the density map")
     parser.add_argument("--conf", type=float, default=45, help="confidence threshold of the density map (percentile)")
@@ -124,6 +126,8 @@ def main():
     windows = args.windows
     if windows is None:
         cached = sorted(p.stem for p in Path(args.recon_cache).glob("*.npz") if WINDOW_NAME.match(p.stem))
+        cached = [n for n in cached if (args.lengths is None or int(WINDOW_NAME.match(n)["length"]) in args.lengths)
+                  and (args.steps is None or int(WINDOW_NAME.match(n)["step"]) in args.steps)]
         windows = [cached[i] for i in sorted(rng.choice(len(cached), min(args.num_windows, len(cached)), replace=False))]
     os.makedirs(args.output, exist_ok=True)
 
