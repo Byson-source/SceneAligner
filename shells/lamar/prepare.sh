@@ -39,29 +39,18 @@ CACHE="${CACHE:-$DATA/session_cache}"  # MapAnything on chunks of the sessions, 
 NUM_GPUS="${NUM_GPUS:-$(nvidia-smi -L | wc -l)}"
 MEM_WORKERS=$(( $(awk '/MemAvailable/ {print int($2 / 1048576)}' /proc/meminfo) / 8 ))  # up to 8 GB per window
 NUM_WORKERS="${NUM_WORKERS:-$(( $(nproc) < MEM_WORKERS ? $(nproc) : MEM_WORKERS > 1 ? MEM_WORKERS : 1 ))}"  # CPU processes of the samples
-export PYTHONUNBUFFERED=1  # the messages of the shards reach the terminal (job output) at once
+export PYTHONUNBUFFERED=1  # the messages and the progress bars reach the terminal (job output) at once
 echo "$NUM_GPUS GPUs, $NUM_WORKERS workers"
 common=(--map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" --floorplan "$FLOORPLAN" --plan_size "$PLAN_SIZE" --session_cache "$CACHE")
-run_shards() {  # run_shards <processes> <gpu: 1|0 (no GPU)> <args...>: one process per shard (progress bar of shard 0), then wait
-    local n="$1" gpu="$2" pids=()
-    shift 2
-    for ((i = 0; i < n; i++)); do
-        CUDA_VISIBLE_DEVICES=$( ((gpu)) && echo "$i") python train/lamar/prepare_lamar.py "$@" --shard "$i" --num_shards "$n" &
-        pids+=($!)
-    done
-    for i in "${!pids[@]}"; do
-        wait "${pids[$i]}" || { echo "shard $i failed (its traceback is above)"; exit 1; }
-    done
-}
-
-# 1. MapAnything on chunks of consecutive frames of the sessions, one process per GPU (cached chunks are skipped)
-run_shards "$NUM_GPUS" 1 --stage recon "${common[@]}" --sessions $SPLITS
-# 2. The windows of every epoch from the cached points (CPU). The epochs finished by a shard are skipped on a rerun:
-#    delete $DATA/epoch_* and $DATA/val/epoch_* after changing EPOCHS, WINDOWS or NUM_WORKERS
+# 1. MapAnything on chunks of consecutive frames of the sessions, one process per GPU, one progress bar of all the
+#    chunks (cached chunks are skipped)
+python train/lamar/prepare_lamar.py --stage recon "${common[@]}" --sessions $SPLITS --workers "$NUM_GPUS"
+# 2. The windows of every epoch from the cached points (CPU processes, one progress bar of all the windows). The
+#    finished epochs are skipped on a rerun:
+#    delete $DATA/epoch_* and $DATA/val/epoch_* after changing EPOCHS or WINDOWS
 for split in $SPLITS; do
     output="$DATA$([[ $split == train ]] || echo "/$split")"
     epochs=$([[ $split == train ]] && echo "$EPOCHS" || echo 1)
-    run_shards "$NUM_WORKERS" 0 --stage samples "${common[@]}" --sessions "$split" \
+    python train/lamar/prepare_lamar.py --stage samples "${common[@]}" --sessions "$split" --workers "$NUM_WORKERS" \
         --output "$output" --epochs "$epochs" --windows_per_session "$WINDOWS"
-    python train/lamar/prepare_lamar.py --merge --output "$output"
 done

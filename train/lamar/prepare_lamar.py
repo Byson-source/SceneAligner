@@ -3,12 +3,11 @@ Every window of frames gives one sample of its MapAnything reconstruction (groun
 poses as input) with a random variation of prepare_c3.py (confidence threshold 30 to 90, x/z slice, gamma), and one
 sample of its LiDAR depth maps, as prepare_s3d.py makes one of the ground-truth depth map of each view.
 
-    # 1. MapAnything on chunks of consecutive frames of every session (GPU; one process per GPU with --shard i --num_shards n)
+    # 1. MapAnything on chunks of consecutive frames of every session (GPU; --workers: one process per GPU)
     python train/lamar/prepare_lamar.py --stage recon --map_dir <HGE/sessions/map> --raw_dir <raw sessions> \
         --floorplan hge.png --session_cache <data>/session_cache
-    # 2. the windows of every epoch, assembled from the cached chunks (CPU; processes with --shard, then --merge)
+    # 2. the windows of every epoch, assembled from the cached chunks (CPU; --workers processes)
     python train/lamar/prepare_lamar.py --stage samples ... --session_cache <data>/session_cache --output <data>
-    python train/lamar/prepare_lamar.py --merge --output <data>
 
 The kept frames of a session are reconstructed once, in chunks of at most --chunk_size consecutive frames; the
 points of every frame are cached in its camera frame, and a window takes those of its frames, placed with the
@@ -25,6 +24,7 @@ windows (visualize_correspondences.py).
 """
 import argparse
 import json
+import multiprocessing
 import os
 import sys
 from pathlib import Path
@@ -53,6 +53,7 @@ MIN_DEPTH_CORRESPONDENCES = 10  # per depth sample, prepare_s3d.MIN_CORRESPONDEN
 RANSAC_THRESHOLD = 10.0  # px of a 512 px floorplan (prepare_c3.is_consistent)
 MAX_WALL_DIST_M = 0.2  # correspondences: points within this distance of a wall of hge.png
 SOURCES = ("mapanything", "lidar")  # sample folders and CSV files lamar_<source>.csv
+PLAN_PATH = os.path.join("floorplan", "hge.png")  # of every data folder
 CSV_COLUMNS = ["scene_id", "density", "floorplan", "correspondences", "rgb", "camera_plan", "camera_density"]
 
 
@@ -264,123 +265,151 @@ def epoch_dir(output: str, epoch: int) -> str:
     return os.path.join(output, f"epoch_{epoch:03d}")
 
 
-def merge_shards(output: str) -> None:
+WORKER = {}  # state of the worker processes (reconstruct_sessions, sample_windows)
+
+
+def chunk_directory(args, name: str, frames: Session) -> str:
+    """Folder of a cached chunk: --session_cache/<session>/t<first timestamp>_n<frames>."""
+    return os.path.join(args.session_cache, name, f"t{int(frames.timestamps[0])}_n{len(frames)}")
+
+
+def init_recon_worker(gpus, args, sessions: dict) -> None:
+    """A MapAnything worker on its own GPU (taken from the queue gpus), before CUDA is initialized."""
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpus.get())
+    WORKER.update(args=args, sessions=sessions, model=None)
+
+
+def chunk_recon(job: tuple) -> tuple[float, float]:
     """
-    Concatenates the CSV files of the shards of every epoch (<epoch>/shards/lamar_<source>_<shard>.csv and
-    windows_<shard>.csv) into <epoch>/lamar_<source>.csv and <epoch>/meta/windows.csv.
-    Args:
-        output (str): data directory
+    MapAnything on one chunk (session name, kept-frame indices), cached with save_chunk.
+    Returns:
+        tuple[float, float]: largest deviation of the poses predicted by MapAnything from the ground truth [deg, m]
+            (the points use the ground truth)
     """
-    for folder in sorted(Path(output).glob("epoch_*")):
-        for kind, path in [*((f"lamar_{s}", folder / f"lamar_{s}.csv") for s in SOURCES), ("windows", folder / "meta" / "windows.csv")]:
-            files = sorted((folder / "shards").glob(f"{kind}_*.csv"))
-            data = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
-            data.to_csv(path, index=False)
-            print(f"{folder.name} {kind}: {len(data)} rows from {len(files)} shards")
+    name, chunk = job
+    frames = WORKER["sessions"][name].subset(chunk)
+    if WORKER["model"] is None:
+        WORKER["model"] = load_mapanything(WORKER["args"].mapanything_model)
+    recon = reconstruct(frames.image_paths, frames.K, frames.c2w, WORKER["model"])
+    save_chunk(chunk_directory(WORKER["args"], name, frames), recon, frames.timestamps)
+    return float(recon["pose_error_deg"].max()), float(recon["pose_error_m"].max())
 
 
 def reconstruct_sessions(sessions: dict, args) -> None:
     """
     MapAnything on chunks of consecutive kept frames of every session (lamar.session_chunks), cached in
-    --session_cache/<session>/t<first timestamp>_n<frames>; this shard takes the chunks shard, shard + num_shards, ...;
-    cached chunks are skipped.
+    --session_cache; --workers processes, one per GPU, with one progress bar; cached chunks are skipped.
     Args:
         sessions (dict): {name: Session of the kept frames}
         args: of main
     """
     jobs = [(name, chunk) for name, session in sessions.items() for chunk in session_chunks(session.timestamps, args.chunk_size)]
-    jobs = jobs[args.shard::args.num_shards]
-    print(f"shard {args.shard}/{args.num_shards}: {len(jobs)} chunks of {sum(len(c) for _, c in jobs)} frames")
-    model = None
-    progress = tqdm(jobs, desc=f"recon shard {args.shard}", disable=args.shard != 0)  # one bar in the terminal
-    for name, chunk in progress:
-        frames = sessions[name].subset(chunk)
-        directory = os.path.join(args.session_cache, name, f"t{int(frames.timestamps[0])}_n{len(frames)}")
-        if os.path.exists(os.path.join(directory, "timestamps.npy")):
-            continue
-        model = model or load_mapanything(args.mapanything_model)
-        recon = reconstruct(frames.image_paths, frames.K, frames.c2w, model)
-        # deviation of the poses predicted by MapAnything from the ground truth (the points use the ground truth)
-        progress.set_postfix(pose_err_deg=f"{recon['pose_error_deg'].max():.2f}", pose_err_m=f"{recon['pose_error_m'].max():.3f}")
-        save_chunk(directory, recon, frames.timestamps)
+    todo = [(name, chunk) for name, chunk in jobs if not os.path.exists(
+        os.path.join(chunk_directory(args, name, sessions[name].subset(chunk)), "timestamps.npy"))]
+    print(f"{len(todo)} of {len(jobs)} chunks to do ({sum(len(c) for _, c in todo)} frames), {args.workers} GPUs", flush=True)
+    if not todo:
+        return
+    context = multiprocessing.get_context("spawn")  # CUDA: no fork
+    gpus = context.Queue()
+    for gpu in range(args.workers):
+        gpus.put(gpu)
+    with context.Pool(args.workers, init_recon_worker, (gpus, args, sessions)) as pool:
+        progress = tqdm(pool.imap_unordered(chunk_recon, todo), total=len(todo), desc="chunks")
+        for err_deg, err_m in progress:
+            progress.set_postfix(pose_err_deg=f"{err_deg:.2f}", pose_err_m=f"{err_m:.3f}")
+
+
+
+
+def window_rows(index: int) -> tuple[int, dict]:
+    """
+    Saves the samples of one window of the jobs of sample_windows (in WORKER) and returns their CSV rows.
+    Args:
+        index (int): of the window in the jobs (its random generator: the samples do not depend on the workers)
+
+    Returns:
+        tuple[int, dict]: index and {source: rows, "windows": [row of the frames of the window]} (empty without points)
+    """
+    args, sessions, plan_params, caches = WORKER["args"], WORKER["sessions"], WORKER["plan_params"], WORKER["caches"]
+    epoch, session_name, window = WORKER["jobs"][index]
+    rows = {kind: [] for kind in (*SOURCES, "windows")}
+    output = epoch_dir(args.output, epoch)
+    frames = sessions[session_name].subset(window)
+    name = window_name(session_name, frames.timestamps)
+    if session_name not in caches:  # memory-mapped, one per worker
+        caches[session_name] = SessionCache(os.path.join(args.session_cache, session_name))
+    recon = window_from_cache(caches[session_name], frames.timestamps, frames.c2w)
+    world, pixels = window_world(frames, recon, args.plan_source)
+    if world is None:
+        return index, rows
+    max_wall_dist = None if args.max_wall_dist < 0 else args.max_wall_dist
+    rng = np.random.default_rng([args.seed, index])  # correspondences and density map
+    corrs = plan_correspondences(world, pixels, recon["mask"].shape, plan_params, args.max_points, rng, max_wall_dist)
+    samples = mapanything_sample(recon, corrs, args.conf, plan_params, output, os.path.join("mapanything", name), rng)
+    if not args.no_lidar_samples and any(p is not None for p in frames.depth_paths):
+        samples += lidar_samples(lidar_points(frames.depth_paths, frames.K_depth, recon["extrinsics"]), recon,
+                                 plan_params, frames.c2w[0], output, os.path.join("lidar", name), args.max_points, rng,
+                                 max_wall_dist)
+    camera_plan = world_to_plan(frames.c2w[-1, :3, 3], plan_params)
+    for sample in samples:
+        sample.update({"scene_id": scene_id_of(frames, args.scene_id, args.cell_m), "floorplan": PLAN_PATH,
+                       "rgb": os.path.abspath(frames.image_paths[-1]), "camera_plan": "{:.2f} {:.2f}".format(*camera_plan),
+                       "camera_density": "{:.2f} {:.2f}".format(*sample["camera_density"])})
+        rows[sample["density"].split(os.sep)[0]].append(sample)
+    rows["windows"].append({"name": name, "session": session_name,
+                            "timestamps": " ".join(str(int(t)) for t in frames.timestamps)})
+    return index, rows
 
 
 def sample_windows(sessions: dict, args, plan_img, plan_params: dict) -> None:
     """
     The samples of --epochs sets of --windows_per_session random windows per session, every window a different
     combination of frames (over all epochs), assembled from the cached chunks: one density map of the reconstruction
-    (mapanything_sample) and one of the LiDAR points (lidar_samples). Epoch e goes to <output>/epoch_<e>; this shard
-    takes the windows shard, shard + num_shards, ...
+    (mapanything_sample) and one of the LiDAR points (lidar_samples). Epoch e goes to <output>/epoch_<e>; the windows
+    are shared by --workers processes (one progress bar), and the CSV files of an epoch are written once all its
+    windows are done (meta/windows.csv last: the epoch is skipped on a rerun).
     Args:
         sessions (dict): {name: Session of the kept frames}
         args: of main
         plan_img: floorplan image of lamar.load_floorplan
         plan_params (dict): of lamar.load_floorplan
     """
-    rng = np.random.default_rng(args.seed)  # the same windows in every shard
+    rng = np.random.default_rng(args.seed)
     seen = {name: set() for name in sessions}
     jobs = [(epoch, name, window) for epoch in range(args.epochs) for name, session in sessions.items()
             for window in sample_distinct_windows(session.timestamps, args.windows_per_session, rng, seen[name],
                                                   tuple(args.num_frames), args.max_step)]
-    max_wall_dist = None if args.max_wall_dist < 0 else args.max_wall_dist
-    plan_path = os.path.join("floorplan", "hge.png")
-    for epoch in range(args.epochs):
-        for folder in ("floorplan", "shards", "meta", *SOURCES):
-            os.makedirs(os.path.join(epoch_dir(args.output, epoch), folder), exist_ok=True)
-        if args.shard == 0:  # one writer
-            plan_img.save(os.path.join(epoch_dir(args.output, epoch), plan_path))
-            with open(os.path.join(epoch_dir(args.output, epoch), "floorplan", "hge_params.json"), "w") as f:
-                json.dump({k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in plan_params.items() if k != "wall_dist_px"}, f, indent=2)
-    print(f"shard {args.shard}/{args.num_shards}: {len(jobs[args.shard::args.num_shards])} of {len(jobs)} windows", flush=True)
+    done = {e for e in range(args.epochs) if os.path.exists(os.path.join(epoch_dir(args.output, e), "meta", "windows.csv"))}
+    todo = [i for i, job in enumerate(jobs) if job[0] not in done]
+    for epoch in set(range(args.epochs)) - done:
+        folder = epoch_dir(args.output, epoch)
+        for sub in ("floorplan", "meta", *SOURCES):
+            os.makedirs(os.path.join(folder, sub), exist_ok=True)
+        plan_img.save(os.path.join(folder, PLAN_PATH))
+        with open(os.path.join(folder, "floorplan", "hge_params.json"), "w") as f:
+            json.dump({k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in plan_params.items() if k != "wall_dist_px"}, f, indent=2)
+    print(f"{len(todo)} of {len(jobs)} windows to do ({len(done)} epochs done), {args.workers} workers", flush=True)
+    if not todo:
+        return
 
-    def write_epoch(epoch: int, epoch_rows: dict) -> None:
-        """The CSV files of this shard for one epoch; windows_<shard>.csv last (complete epoch, skipped on a rerun)."""
-        for kind in (*SOURCES, "windows"):
-            columns = ["name", "session", "timestamps"] if kind == "windows" else CSV_COLUMNS
-            stem = kind if kind == "windows" else f"lamar_{kind}"
-            path = os.path.join(epoch_dir(args.output, epoch), "shards", f"{stem}_{args.shard}.csv")
-            pd.DataFrame(epoch_rows[kind], columns=columns).to_csv(path, index=False)
-        print(f"shard {args.shard}: epoch {epoch} done, " + ", ".join(f"{k} {len(v)}" for k, v in epoch_rows.items()), flush=True)
-
-    def epoch_done(epoch: int) -> bool:
-        return os.path.exists(os.path.join(epoch_dir(args.output, epoch), "shards", f"windows_{args.shard}.csv"))
-
-    caches = {}  # memory-mapped
-    todo = [i for i in range(args.shard, len(jobs), args.num_shards) if not epoch_done(jobs[i][0])]
-    rows = {source: [] for source in (*SOURCES, "windows")}
-    for k, index in enumerate(tqdm(todo, desc=f"samples shard {args.shard}", disable=args.shard != 0)):
-        epoch, session_name, window = jobs[index]
-        output = epoch_dir(args.output, epoch)
-        frames = sessions[session_name].subset(window)
-        name = window_name(session_name, frames.timestamps)
-        if session_name not in caches:
-            caches[session_name] = SessionCache(os.path.join(args.session_cache, session_name))
-        recon = window_from_cache(caches[session_name], frames.timestamps, frames.c2w)
-        world, pixels = window_world(frames, recon, args.plan_source)
-        if world is not None:
-            rng_window = np.random.default_rng([args.seed, index])  # correspondences and density map, whatever the shards
-            corrs = plan_correspondences(world, pixels, recon["mask"].shape, plan_params, args.max_points, rng_window,
-                                         max_wall_dist)
-            common = {"scene_id": scene_id_of(frames, args.scene_id, args.cell_m), "floorplan": plan_path,
-                      "rgb": os.path.abspath(frames.image_paths[-1]),
-                      "camera_plan": world_to_plan(frames.c2w[-1, :3, 3], plan_params)}
-            samples = mapanything_sample(recon, corrs, args.conf, plan_params, output, os.path.join("mapanything", name), rng_window)
-            if not args.no_lidar_samples and any(p is not None for p in frames.depth_paths):
-                samples += lidar_samples(lidar_points(frames.depth_paths, frames.K_depth, recon["extrinsics"]), recon,
-                                         plan_params, frames.c2w[0], output, os.path.join("lidar", name),
-                                         args.max_points, rng_window, max_wall_dist)
-            for sample in samples:
-                sample.update(common)
-                sample["camera_plan"] = "{:.2f} {:.2f}".format(*common["camera_plan"])
-                sample["camera_density"] = "{:.2f} {:.2f}".format(*sample["camera_density"])
-                rows[sample["density"].split(os.sep)[0]].append(sample)
-            rows["windows"].append({"name": name, "session": session_name,
-                                    "timestamps": " ".join(str(int(t)) for t in frames.timestamps)})
-        if k + 1 == len(todo) or jobs[todo[k + 1]][0] != epoch:  # the jobs are in epoch order
-            write_epoch(epoch, rows)
-            rows = {source: [] for source in (*SOURCES, "windows")}
-    if args.num_shards == 1:
-        merge_shards(args.output)
+    left = {e: sum(jobs[i][0] == e for i in todo) for e in set(range(args.epochs)) - done}
+    rows = {e: {} for e in left}  # epoch -> index -> rows
+    WORKER.update(args=args, sessions=sessions, plan_params=plan_params, jobs=jobs, caches={})
+    with multiprocessing.get_context("fork").Pool(args.workers) as pool:
+        for index, window in tqdm(pool.imap_unordered(window_rows, todo), total=len(todo), desc="windows", smoothing=0.05):
+            epoch = jobs[index][0]
+            rows[epoch][index] = window
+            left[epoch] -= 1
+            if left[epoch] == 0:  # the CSV files of the epoch, in the order of the windows
+                ordered = [rows[epoch][i] for i in sorted(rows[epoch])]
+                folder = epoch_dir(args.output, epoch)
+                for source in SOURCES:
+                    pd.DataFrame([r for w in ordered for r in w[source]], columns=CSV_COLUMNS).to_csv(
+                        os.path.join(folder, f"lamar_{source}.csv"), index=False)
+                pd.DataFrame([r for w in ordered for r in w["windows"]], columns=["name", "session", "timestamps"]).to_csv(
+                    os.path.join(folder, "meta", "windows.csv"), index=False)
+                tqdm.write(f"epoch {epoch}: " + ", ".join(f"{k} {sum(len(w[k]) for w in ordered)}" for k in (*SOURCES, "windows")))
+                del rows[epoch]
 
 
 def main():
@@ -392,9 +421,7 @@ def main():
     parser.add_argument("--floorplan", help="hge.png")
     parser.add_argument("--session_cache", help="cached reconstructions of the chunks of the sessions (written by recon)")
     parser.add_argument("--output", help="data directory of the samples: <output>/epoch_<e>")
-    parser.add_argument("--shard", type=int, default=0, help="this process handles the jobs shard, shard + num_shards, ...")
-    parser.add_argument("--num_shards", type=int, default=1, help="processes; their CSV files go to <epoch>/shards")
-    parser.add_argument("--merge", action="store_true", help="only concatenates the CSV files of the shards")
+    parser.add_argument("--workers", type=int, default=1, help="processes: recon, one per GPU; samples, CPU processes")
     parser.add_argument("--split", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "split.yaml"))
     parser.add_argument("--sessions", nargs="+", default=["train"], help="splits (train, val, test) or session names")
     parser.add_argument("--plan_size", type=int, default=1024, help="resolution of the floorplan")
@@ -415,9 +442,6 @@ def main():
     parser.add_argument("--mapanything_model", default="facebook/map-anything")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
-    if args.merge:
-        merge_shards(args.output)
-        return
     if args.stage is None:
         parser.error("--stage recon or --stage samples")
 

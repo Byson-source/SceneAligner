@@ -177,13 +177,16 @@ qsub shells/train/lamar_hg.sh                                              # tra
 qsub -v CHECKPOINT=outputs/lamar_lamar_rt_HG_<date>_<time> shells/lamar/evaluate_hg.sh  # val, then test
 ```
 
-`prepare.sh` runs `--stage recon` with one process per GPU of the node, then `--stage samples` with `NUM_WORKERS`
-CPU processes (default: the CPUs of the node, at most one per 8 GB of free memory; `EPOCHS` sets of `WINDOWS`
-windows per session, default 20 and 50). The processes print to the job output (`PYTHONUNBUFFERED`; the progress
-bar is that of shard 0, a failing shard prints its traceback). The epochs that a shard finished are kept and skipped
-on a rerun: delete `$DATA/epoch_*` and `$DATA/val/epoch_*` after changing `EPOCHS`, `WINDOWS` or `NUM_WORKERS`.
-The data go to `DATA`, by default `/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar`. `evaluate.sh` runs one process per GPU (logs in `$OUT/<val|test>_results.shard<i>.log`). Both shard
-round robin (`--shard i --num_shards n`) and merge their outputs (`--merge`; the seeds of the alignment depend on the window, not on the shard): `_hf` uses all the GPUs of
+`prepare.sh` runs `--stage recon` with one process per GPU of the node (`--workers`), then `--stage samples` with
+`NUM_WORKERS` CPU processes (default: the CPUs of the node, at most one per 8 GB of free memory; `EPOCHS` sets of
+`WINDOWS` windows per session, default 20 and 50). Each stage is one python process that shares the chunks or
+windows between its workers (`multiprocessing.Pool`) and shows one progress bar of all of them in the job output
+(`PYTHONUNBUFFERED`); a failing worker stops the job with its traceback. The samples do not depend on the number of
+workers (the random generator of a window is seeded by its index). The epochs whose CSV files are written are
+skipped on a rerun: delete `$DATA/epoch_*` and `$DATA/val/epoch_*` after changing `EPOCHS` or `WINDOWS`.
+The data go to `DATA`, by default `/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar`. `evaluate.sh` runs one
+process per GPU (`--shard i --num_shards n`, round robin; logs in `$OUT/<val|test>_results.shard<i>.log`) and
+merges their outputs (`--merge`; the seeds of the alignment depend on the window, not on the shard): `_hf` uses all the GPUs of
 a node, `_hg` one. `train.sh` runs `train.py` with `torchrun` on all the GPUs of the node (DistributedDataParallel,
 a batch of 4 windows per GPU: 32 on rt_HF, lr unchanged); the points of the batches of all GPUs are the candidates
 of the feature matching loss (all_gather), and the logs are the mean over the GPUs.
