@@ -21,7 +21,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lamar import load_floorplan, load_session, train_frames, world_to_plan_full  # noqa: E402
-from prepare_lamar import plan_correspondences, window_world  # noqa: E402
+from prepare_lamar import plan_correspondences, window_world, world_grid  # noqa: E402
 from reconstruction import SessionCache, window_from_cache  # noqa: E402
 from prepare_lamar import DENSITY_SIZE, MAX_WALL_DIST_M  # noqa: E402
 from scenealigner.evaluation import get_camera_center_on_density_px, process_gt_correspondences  # noqa: E402
@@ -139,13 +139,15 @@ def main():
             caches[session_name] = SessionCache(os.path.join(args.session_cache, session_name))
         timestamps = np.array(listed.timestamps[name].split(), dtype=np.int64)
         frames = sessions[session_name].subset(np.searchsorted(sessions[session_name].timestamps, timestamps))
-        recon = window_from_cache(caches[session_name], frames.timestamps, frames.c2w)
+        recon = window_from_cache(caches[session_name], frames.timestamps, frames.c2w, images=True)
         length = len(frames)
-        world, _ = window_world(frames, recon, args.plan_source)
+        world, pixels = window_world(frames, recon, args.plan_source)
         if world is None:
             print(f"{name}: no LiDAR")
             continue
-        corrs = plan_correspondences(world, plan_params, args.max_points, rng, None if args.max_wall_dist < 0 else args.max_wall_dist)
+        corrs = plan_correspondences(world, pixels, recon["mask"].shape, plan_params, args.max_points, rng,
+                                     None if args.max_wall_dist < 0 else args.max_wall_dist)
+        world = world_grid(world, pixels, recon["mask"].shape)
         proj_params, points, proj_mask = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"],
                                                                          args.conf, args.xz, density_size=DENSITY_SIZE)
         density_img = np.array(render_training_map(points, proj_params, 0.5).convert("RGB"))

@@ -129,11 +129,11 @@ def save_recon(path: str, recon: dict) -> None:
     np.savez_compressed(path, **{k: (v.astype(np.float16) if k == "points_cam0" else v) for k, v in recon.items()})
 
 
-CHUNK_KEYS = ("points_cam", "conf", "mask", "preprocessed_images", "intrinsics", "pose_error_deg", "pose_error_m",
-              "lidar_cam")  # per-frame arrays of a cached chunk ("lidar_cam" only with depth), plus "timestamps"
+CHUNK_KEYS = ("points_cam", "conf", "mask", "preprocessed_images", "intrinsics", "pose_error_deg",
+              "pose_error_m")  # per-frame arrays of a cached chunk, plus "timestamps"
 
 
-def save_chunk(directory: str, recon: dict, timestamps: np.ndarray, lidar_cam: np.ndarray | None) -> None:
+def save_chunk(directory: str, recon: dict, timestamps: np.ndarray) -> None:
     """
     Caches the reconstruction of a chunk of a session (lamar.session_chunks) as .npy files (memory-mapped by
     SessionCache): the points of every frame in its own camera frame (float16), so that any window of the session
@@ -142,18 +142,13 @@ def save_chunk(directory: str, recon: dict, timestamps: np.ndarray, lidar_cam: n
         directory (str): folder of the chunk
         recon (dict): of reconstruct
         timestamps (np.ndarray): integer tensor with shape [S], microseconds of the frames
-        lidar_cam (np.ndarray | None): tensor with shape [S, H, W, 3], LiDAR points in the frame of every camera (NaN
-            where missing), None without depth
     """
     os.makedirs(directory, exist_ok=True)
     ext = recon["extrinsics"].astype(np.float32)  # camera-to-camera-0
     points = (recon["points_cam0"] - ext[:, None, None, :3, 3]) @ ext[:, None, :3, :3]  # R^T (p - t): own camera
     points[~recon["mask"]] = 0.0
-    arrays = {**{k: recon[k] for k in CHUNK_KEYS[1:-1]}, "points_cam": points.astype(np.float16)}
-    if lidar_cam is not None:
-        arrays["lidar_cam"] = lidar_cam.astype(np.float16)
-    for key, value in arrays.items():
-        np.save(os.path.join(directory, f"{key}.npy"), value)
+    for key in CHUNK_KEYS:
+        np.save(os.path.join(directory, f"{key}.npy"), points.astype(np.float16) if key == "points_cam" else recon[key])
     np.save(os.path.join(directory, "timestamps.npy"), np.asarray(timestamps, np.int64))
 
 
@@ -162,16 +157,11 @@ class SessionCache:
 
     def __init__(self, directory: str):
         chunk_dirs = sorted(p for p in Path(directory).iterdir() if (p / "timestamps.npy").exists())
-        self.chunks = [{k: np.load(p / f"{k}.npy", mmap_mode="r") for k in (*CHUNK_KEYS, "timestamps")
-                        if (p / f"{k}.npy").exists()} for p in chunk_dirs]
+        self.chunks = [{k: np.load(p / f"{k}.npy", mmap_mode="r") for k in (*CHUNK_KEYS, "timestamps")} for p in chunk_dirs]
         order = np.argsort([c["timestamps"][0] for c in self.chunks])
         self.chunks = [self.chunks[i] for i in order]
         self.timestamps = np.concatenate([c["timestamps"] for c in self.chunks])
         self.starts = np.cumsum([0] + [len(c["timestamps"]) for c in self.chunks])[:-1]
-
-    def has(self, key: str) -> bool:
-        """The array is cached for every chunk (lidar_cam: the session has depth)."""
-        return all(key in c for c in self.chunks)
 
     def take(self, key: str, timestamps: np.ndarray) -> np.ndarray:
         """
@@ -194,7 +184,7 @@ class SessionCache:
         return out
 
 
-def window_from_cache(cache: SessionCache, timestamps: np.ndarray, c2w: np.ndarray) -> dict:
+def window_from_cache(cache: SessionCache, timestamps: np.ndarray, c2w: np.ndarray, images: bool = False) -> dict:
     """
     Reconstruction of a window assembled from the cached chunks of its session, as reconstruct returns it: the points
     of every frame placed with its ground-truth pose relative to the first frame of the window.
@@ -202,25 +192,25 @@ def window_from_cache(cache: SessionCache, timestamps: np.ndarray, c2w: np.ndarr
         cache (SessionCache): of the session
         timestamps (np.ndarray): integer tensor with shape [S], microseconds of the frames of the window
         c2w (np.ndarray): tensor with shape [S, 4, 4], camera-to-world poses [m]
+        images (bool): also "preprocessed_images" (only for visualizations: the samples do not read them)
 
     Returns:
-        dict: the keys of reconstruct, "timestamps", and "lidar_cam0" [S, H, W, 3] (LiDAR points in the frame of
-            camera 0, NaN where missing) if the session has depth
+        dict: the keys of reconstruct ("preprocessed_images" only with images) and "timestamps"
     """
     extrinsics = relative_extrinsics(c2w)
     R, t = extrinsics[:, None, :3, :3].astype(np.float32), extrinsics[:, None, None, :3, 3].astype(np.float32)
     mask = cache.take("mask", timestamps)
-    points = cache.take("points_cam", timestamps).astype(np.float32) @ R.transpose(0, 1, 3, 2) + t
+    points = cache.take("points_cam", timestamps).astype(np.float32) @ R.transpose(0, 1, 3, 2)
+    points += t
     points[~mask] = 0.0
     S, H, W = mask.shape
     recon = {"points_cam0": points, "conf": cache.take("conf", timestamps), "mask": mask,
              "extrinsics": extrinsics.astype(np.float64), "est_gravity_cam": gravity_cam0(c2w[0]),
-             "preprocessed_images": cache.take("preprocessed_images", timestamps),
              "image_sizes": np.tile(np.array([[W, H]]), (S, 1)), "intrinsics": cache.take("intrinsics", timestamps),
              "pose_error_deg": cache.take("pose_error_deg", timestamps),
              "pose_error_m": cache.take("pose_error_m", timestamps), "timestamps": np.asarray(timestamps)}
-    if cache.has("lidar_cam"):
-        recon["lidar_cam0"] = cache.take("lidar_cam", timestamps).astype(np.float32) @ R.transpose(0, 1, 3, 2) + t
+    if images:
+        recon["preprocessed_images"] = cache.take("preprocessed_images", timestamps)
     return recon
 
 

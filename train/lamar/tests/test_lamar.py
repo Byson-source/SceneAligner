@@ -201,7 +201,7 @@ def test_window_from_cached_chunks(tmp_path):
                  "mask": mask[chunk], "extrinsics": ext, "conf": np.ones((2, H, W), np.float32),
                  "preprocessed_images": np.zeros((2, H, W, 3), np.uint8), "intrinsics": np.tile(np.eye(3), (2, 1, 1)),
                  "pose_error_deg": np.zeros(2), "pose_error_m": np.zeros(2)}
-        reconstruction.save_chunk(str(tmp_path / f"t{timestamps[chunk][0]}_n2"), recon, timestamps[chunk], local[chunk])
+        reconstruction.save_chunk(str(tmp_path / f"t{timestamps[chunk][0]}_n2"), recon, timestamps[chunk])
     cache = reconstruction.SessionCache(str(tmp_path))
     window = [1, 2, 3]  # across the chunks
     recon = reconstruction.window_from_cache(cache, timestamps[window], c2w[window])
@@ -209,5 +209,42 @@ def test_window_from_cached_chunks(tmp_path):
     expected = local[window] @ ext[:, None, :3, :3].transpose(0, 1, 3, 2) + ext[:, None, None, :3, 3]
     assert np.array_equal(recon["mask"], mask[window])
     assert np.abs(recon["points_cam0"] - np.where(mask[window, ..., None], expected, 0)).max() < 0.02  # float16
-    assert np.abs(recon["lidar_cam0"] - expected).max() < 0.02
+    assert "preprocessed_images" not in recon
     assert np.allclose(recon["est_gravity_cam"], lamar.gravity_cam0(c2w[1]))
+
+
+def test_plan_correspondences_of_the_points_with_a_pixel():
+    prepare_lamar = pytest.importorskip("prepare_lamar")  # torch, scenealigner
+    params = synthetic_plan_params()
+    rng = np.random.default_rng(0)
+    S, H, W = 3, 20, 30
+    grid = rng.uniform(-20, 40, (S, H, W, 3))
+    mask = rng.uniform(size=(S, H, W)) > 0.2
+    pixels = np.nonzero(mask.reshape(-1))[0]
+    world = grid.reshape(-1, 3)[pixels]
+    on = lamar.on_plan(world, params, None)
+    assert on.sum() > 100
+    corrs = prepare_lamar.plan_correspondences(world, pixels, (S, H, W), params, 100, np.random.default_rng(1), None)
+    # as on the full grid with NaN where there is no point (the version before)
+    flat = np.where(mask[..., None], grid, np.nan).reshape(-1, 3)
+    idx = np.nonzero(lamar.on_plan(flat, params, None))[0]
+    idx = np.sort(np.random.default_rng(1).choice(idx, 100, replace=False))
+    view, pixel = np.divmod(idx, H * W)
+    for s in range(S):
+        v, u = np.divmod(pixel[view == s], W)
+        assert np.array_equal(corrs[s]["tensor_coords"], np.stack([u, v], axis=1).astype(np.float32))
+
+
+def test_lidar_points(tmp_path):
+    import cv2
+
+    depth = np.full((4, 6), 2000, np.uint16)  # 2 m
+    depth[0, 0] = 0  # invalid
+    cv2.imwrite(str(tmp_path / "d.png"), depth)
+    K = np.array([[3.0, 0, 3.0], [0, 3.0, 2.0], [0, 0, 1]])
+    ext = np.tile(np.eye(4), (3, 1, 1))
+    ext[2, :3, 3] = [1.0, 0, 0]
+    path = str(tmp_path / "d.png")
+    points = lamar.lidar_points([path, None, path], np.stack([K, K, K]), ext)  # frame 1 without depth
+    assert points.shape == (2 * 23, 3) and np.allclose(points[:, 2], 2.0)
+    assert np.allclose(points[23:, 0] - points[:23, 0], 1.0)  # second depth map moved by the extrinsics of frame 2

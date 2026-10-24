@@ -27,10 +27,10 @@
 - pose・画像は benchmark 版 `HGE/sessions/map` (unloc と同じ)、LiDAR depth は raw セッション `ios_<date>_<time>` から timestamp で対応付け。
 - split は unloc (`train/lamar/split.yaml`: train 12 / val 1 / test 3)。評価は Z-FLoc (非重複 L 窓 15/20/35/50/100、最終 10 フレーム全て <1 m で成功、seed 42〜46、0.055 m/px)。
 - 学習データは upstream (Cornell-VAILab/SceneAligner) の `prepare_c3.py` を基本、GT 幾何から対応点を作る部分は `prepare_s3d.py` (fork では削除済み、`git show 65f91be:prepare_s3d.py`) に合わせる。独自設定は入れない (対応表は `train/lamar/README.md`)。
-  - 再構成: session の kept frame を連続 ≤500 枚の chunk ごとに MapAnything で 1 回だけ推論し、各フレームの点を自カメラ座標 (float16) で `$DATA/session_cache/<session>/` に cache (LiDAR も)。窓は cache の点を GT pose で窓先頭基準に並べて作る (`reconstruction.window_from_cache`、chunk 跨ぎ可)。
+  - 再構成: session の kept frame を連続 ≤500 枚の chunk ごとに MapAnything で 1 回だけ推論し、各フレームの点を自カメラ座標 (float16) で `$DATA/session_cache/<session>/` に cache。窓は cache の点を GT pose で窓先頭基準に並べて作る (`reconstruction.window_from_cache`、chunk 跨ぎ可)。
   - 学習窓 (ユーザー指定): epoch ごとに別の窓 (`$DATA/epoch_<e>`、既定 20 epoch)、セッションごとに 50 窓をランダム、全 epoch を通して同じフレームの組み合わせは使わない。フレーム数 50〜500・開始位置・フレーム間隔 (1〜4) をランダム (5 s 超の欠落を跨がない)。名前は `<session>_t<先頭 ts>_n<枚数>_<crc32>`、フレームは `<epoch>/meta/windows.csv`。評価窓は Z-FLoc のまま。学習フレームは UnLoc の室内区間 + plan 内のみ。
   - MapAnything sample: 1 窓 1 枚。C3 の conf 30/45/60/75/90 × xz 0/2.5/5 × gamma 4 種からランダム (一貫性を通るまで conf×xz を乱順に試す)、フレームごと 8 点以上、RANSAC 一貫性 (10 px/512)。
-  - LiDAR sample: S3D の GT depth sample と同じ (高さ 20〜95 %, xz 2.5 %, gamma 0.5, 10 点以上, 一貫性なし)。
+  - LiDAR sample: S3D の GT depth sample と同じ (高さ 20〜95 %, xz 2.5 %, gamma 0.5, 10 点以上, 一貫性なし)。depth の解像度 (256×192) のまま unproject (`lamar.lidar_points`、再構成 grid に拡大しない)、対応点は `--max_points` 20000 に間引く (間引き前は 1 窓 24 MB でディスクが溢れた)。
   - 対応点: S3D と同じく壁上の点のみ。許容幅は hge.png の壁から 0.2 m (0.5 m は緩すぎるとしてユーザー判断で戻した。遠い壁の点は減る)。
   - 学習: S3D の `--epochs 20 --min_points 1000`、解像度は plan と同じ単一 1024。density map は学習・評価とも 512。
 - floorplan (`hge.png` 3278×2334, 再配布不可) は `--plan_size 1024` に縮小して入力 (原寸は ViT の token 数で不可、512 は 1 m = 2.9 px で粗い)。
@@ -39,7 +39,7 @@
 
 構成
 - `train/lamar/`: `lamar.py` (CAPTURE 読込, affine, 壁判定, フィルタ, 窓, LiDAR), `reconstruction.py` (MapAnything), `prepare_lamar.py`, `evaluate_lamar.py`, `visualize_correspondences.py` (RGB・density・floorplan の対応点を 7 色で描画), `split.yaml`, `tests/`
-- `shells/lamar/`: `download_lamar.sh`, `prepare.sh` (+`_hf`/`_hg`。GPU ごとに 1 プロセス `--shard`、最後に `--merge`。HF は全 GPU を使う), `evaluate.sh` (+`_hf`/`_hg`。prepare と同じく GPU ごとに分割し `--merge`。seed は窓 index で決まり分割に依らない)。train は torchrun + DDP でノードの全 GPU (rt_HF 8 枚、GPU あたり batch 4 = 計 32、lr 1e-4 据え置き、feat の負例は全 GPU の点を all_gather)。prepare は GPU ごとに `--stage recon`、次に CPU `NUM_WORKERS` (既定 32) 並列で `--stage samples` (`EPOCHS`/`WINDOWS`)。`SPLITS` (既定 `train val`) で val session の窓も `$DATA/val/epoch_000` (1 set、固定) に作り、train.sh はあれば `--val_data` を渡して epoch ごとに val の loss/acc/chance を wandb `val/`・`<run>/val_log.csv` に記録 (augmentation は `--seed` で固定)。`shells/train/`: `train.sh`, `lamar_hf.sh`, `lamar_hg.sh`
+- `shells/lamar/`: `download_lamar.sh`, `prepare.sh` (+`_hf`/`_hg`。GPU ごとに 1 プロセス `--shard`、最後に `--merge`。HF は全 GPU を使う), `evaluate.sh` (+`_hf`/`_hg`。prepare と同じく GPU ごとに分割し `--merge`。seed は窓 index で決まり分割に依らない)。train は torchrun + DDP でノードの全 GPU (rt_HF 8 枚、GPU あたり batch 4 = 計 32、lr 1e-4 据え置き、feat の負例は全 GPU の点を all_gather)。prepare は GPU ごとに `--stage recon`、次に CPU `NUM_WORKERS` (既定 min(nproc, 空きメモリ/8 GB)) 並列で `--stage samples` (`EPOCHS`/`WINDOWS`)。出力は log ファイルでなく job 出力に即表示 (進捗バーは shard 0)。shard は epoch ごとに CSV を書き、再実行時は済んだ epoch を飛ばす (設定変更時は `epoch_*` を手で消す)。データ (`DATA`) の既定は `/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar`。`SPLITS` (既定 `train val`) で val session の窓も `$DATA/val/epoch_000` (1 set、固定) に作り、train.sh はあれば `--val_data` を渡して epoch ごとに val の loss/acc/chance を wandb `val/`・`<run>/val_log.csv` に記録 (augmentation は `--seed` で固定)。`shells/train/`: `train.sh`, `lamar_hf.sh`, `lamar_hg.sh`
 - 既存の変更: `train.py` (wandb, 可視化), `scenealigner/training.py` (任意列 `rgb`/`camera_plan`/`camera_density`), `scenealigner/visualization.py`, `scenealigner/inference.py` (解像度を floorplan から取得。512 では不変)
 
 状態

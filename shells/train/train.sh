@@ -22,7 +22,7 @@ REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this 
 cd "$REPO"
 set -euo pipefail
 
-DATA="${DATA:-data/lamar_hge}"
+DATA="${DATA:-/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar}"
 RTYPE="${RTYPE:-rt_HG}"
 RUN="${RUN:-${RESUME:-outputs/lamar_$(basename "$DATA")_${RTYPE}_$(date +%Y%m%d_%H%M%S)}}"  # a new run per job
 resume_args=()

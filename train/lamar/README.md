@@ -90,8 +90,8 @@ python train/lamar/prepare_lamar.py --stage samples --map_dir <LAMAR_ROOT>/HGE/s
 `--stage recon` reconstructs the kept frames of every session once with MapAnything, in chunks of at most
 `--chunk_size 500` consecutive frames (`lamar.session_chunks`, inside runs without a gap of more than 5 s), and
 caches them in `<data>/session_cache/<session>/t<first timestamp>_n<frames>/` (`reconstruction.save_chunk`): the
-points of every frame in its own camera frame (float16, memory-mapped), its confidence, mask, image and intrinsics,
-and its LiDAR points. Delete the cache after changing `--chunk_size`.
+points of every frame in its own camera frame (float16, memory-mapped), its confidence, mask, image and intrinsics.
+Delete the cache after changing `--chunk_size` (`lidar_cam.npy` of an older version is not used).
 
 `--stage samples` draws, for each of `--epochs` epochs and every train session, `--windows_per_session 50` random
 windows (`lamar.sample_distinct_windows`): a run of kept frames drawn proportionally to its length; 50 to 500 frames
@@ -106,8 +106,9 @@ window gives:
   the frames that have at least 8 of them and they agree with a similarity transform). `--plan_source lidar` places
   the correspondences with the LiDAR points instead of the reconstructed ones (as `prepare_s3d.py` does with the
   ground-truth depth).
-- `lidar/`: one density map of the LiDAR points (gamma 0.5), seen from above in the gravity-aligned frame of the
-  first camera, as `prepare_s3d.depth_sample`, if it has at least 10 correspondences.
+- `lidar/`: one density map of the LiDAR points (gamma 0.5) at the resolution of the depth maps
+  (`lamar.lidar_points`), seen from above in the gravity-aligned frame of the first camera, as
+  `prepare_s3d.depth_sample`, if it has at least 10 correspondences; at most `--max_points` of them are kept, at random.
 
 The CSV columns `rgb`, `camera_plan` and `camera_density` (the photo and the position of the last camera) are only
 used by the visualizations of `train.py`. All windows share the floorplan, so `scene_id` is `hge` for all of them;
@@ -171,14 +172,17 @@ The jobs in `shells/` (PBS, conda environment `scenealigner`) run in `REPO`, by 
 
 ```bash
 qsub shells/lamar/download_lamar.sh                                        # raw sessions, HGE/sessions/map, hge.png
-qsub shells/lamar/prepare_hg.sh                                            # lamar.py --check, prepare_lamar.py -> data/lamar_hge
-qsub shells/train/lamar_hg.sh                                              # train.py -> outputs/lamar_lamar_hge_rt_HG_<date>_<time>, wandb
-qsub -v CHECKPOINT=outputs/lamar_lamar_hge_rt_HG_<date>_<time> shells/lamar/evaluate_hg.sh  # val, then test
+qsub shells/lamar/prepare_hg.sh                                            # lamar.py --check, prepare_lamar.py -> /groups/gai51740/RBT3/umemura/zfloc/dataset/lamar
+qsub shells/train/lamar_hg.sh                                              # train.py -> outputs/lamar_lamar_rt_HG_<date>_<time>, wandb
+qsub -v CHECKPOINT=outputs/lamar_lamar_rt_HG_<date>_<time> shells/lamar/evaluate_hg.sh  # val, then test
 ```
 
 `prepare.sh` runs `--stage recon` with one process per GPU of the node, then `--stage samples` with `NUM_WORKERS`
-CPU processes (default 32; `EPOCHS` sets of `WINDOWS` windows per session, default 20 and 50), logs in
-`$DATA/logs/`; `evaluate.sh` runs one process per GPU (logs in `$OUT/<val|test>_results.shard<i>.log`). Both shard
+CPU processes (default: the CPUs of the node, at most one per 8 GB of free memory; `EPOCHS` sets of `WINDOWS`
+windows per session, default 20 and 50). The processes print to the job output (`PYTHONUNBUFFERED`; the progress
+bar is that of shard 0, a failing shard prints its traceback). The epochs that a shard finished are kept and skipped
+on a rerun: delete `$DATA/epoch_*` and `$DATA/val/epoch_*` after changing `EPOCHS`, `WINDOWS` or `NUM_WORKERS`.
+The data go to `DATA`, by default `/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar`. `evaluate.sh` runs one process per GPU (logs in `$OUT/<val|test>_results.shard<i>.log`). Both shard
 round robin (`--shard i --num_shards n`) and merge their outputs (`--merge`; the seeds of the alignment depend on the window, not on the shard): `_hf` uses all the GPUs of
 a node, `_hg` one. `train.sh` runs `train.py` with `torchrun` on all the GPUs of the node (DistributedDataParallel,
 a batch of 4 windows per GPU: 32 on rt_HF, lr unchanged); the points of the batches of all GPUs are the candidates
@@ -191,7 +195,7 @@ of the feature matching loss (all_gather), and the logs are the mean over the GP
 augmentations at every epoch, seeded by `--seed`) and logs them to wandb (`val/...`) and `<run>/val_log.csv`.
 
 `REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `WINDOWS`, `NUM_GPUS`, `NUM_WORKERS`, `CACHE`, `SPLITS`, `VAL_DATA`, `RESUME`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
-`qsub -v`, e.g. `qsub -v DATA=data/lamar_hge,EPOCHS=4 shells/train/lamar_hf.sh`. The cached reconstructions of an
+`qsub -v`, e.g. `qsub -v DATA=<data>,EPOCHS=4 shells/train/lamar_hf.sh`. The cached reconstructions of an
 older version (`<session>_s<start>_L<length>.npz`, indexed by the frames of other filters), the per-window cache
 `$DATA/recon_cache` and the samples directly in `$DATA` (`mapanything/`, `lidar/`, `lamar_*.csv`) of the previous
 version are not used and can be deleted.

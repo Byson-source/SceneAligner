@@ -732,6 +732,28 @@ def unproject(depth_z: np.ndarray, K: np.ndarray) -> np.ndarray:
     return points.astype(np.float32)
 
 
+def lidar_points(depth_paths: list, K_depth: np.ndarray, extrinsics: np.ndarray) -> np.ndarray:
+    """
+    LiDAR points of the frames of a window in the frame of camera 0, at the resolution of the depth maps (as the
+    ground-truth depth samples of prepare_s3d.py).
+    Args:
+        depth_paths (list): S depth PNG paths, None for frames without depth
+        K_depth (np.ndarray): tensor with shape [S, 3, 3], intrinsics of the depth maps (NaN without depth)
+        extrinsics (np.ndarray): tensor with shape [S, 4, 4], camera-to-camera-0
+
+    Returns:
+        np.ndarray: float32 tensor with shape [M, 3], the valid depth pixels of all the frames
+    """
+    points = [np.zeros((0, 3), np.float32)]
+    for i, path in enumerate(depth_paths):
+        if path is None:
+            continue
+        local = unproject(load_depth(path), K_depth[i]).reshape(-1, 3)
+        local = local[np.isfinite(local).all(axis=1)]
+        points.append((local @ extrinsics[i, :3, :3].T + extrinsics[i, :3, 3]).astype(np.float32))
+    return np.concatenate(points)
+
+
 def lidar_points_cam0(depth_paths: list, K_depth: np.ndarray, K_out: np.ndarray, hw_out: tuple[int, int],
                       extrinsics: np.ndarray) -> np.ndarray:
     """

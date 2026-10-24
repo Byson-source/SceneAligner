@@ -35,7 +35,7 @@ import pandas as pd
 from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from lamar import (TRAIN_FRAMES, TRAIN_MAX_STEP, Session, filter_ground_points, ground_rotation, lidar_points_cam0,  # noqa: E402
+from lamar import (TRAIN_FRAMES, TRAIN_MAX_STEP, Session, filter_ground_points, ground_rotation, lidar_points, lidar_points_cam0,  # noqa: E402
                    load_floorplan, load_session, load_split, on_plan, sample_distinct_windows, session_chunks,
                    top_down_projection, train_frames, window_name, world_to_plan)
 from reconstruction import SessionCache, load_mapanything, reconstruct, save_chunk, window_from_cache  # noqa: E402
@@ -87,33 +87,52 @@ def world_points(points_cam0: np.ndarray, c2w0: np.ndarray) -> np.ndarray:
 
 def window_world(frames: Session, recon: dict, plan_source: str) -> tuple:
     """
-    World points of the pixels of a window, from which the correspondences are drawn, and its LiDAR points.
+    World points of the pixels of a window from which the correspondences are drawn: only the pixels with a point.
     Args:
         frames (Session): the frames of the window
         recon (dict): of reconstruction.reconstruct
-        plan_source (str): "recon" (reconstructed points) or "lidar" (LiDAR points)
+        plan_source (str): "recon" (reconstructed points) or "lidar" (LiDAR points on the pixel grid)
 
     Returns:
-        tuple: world (np.ndarray [S, H, W, 3], NaN where unused; None for "lidar" without depth) and lidar
-            (np.ndarray [S, H, W, 3] in the frame of camera 0, NaN where missing; None without depth)
+        tuple: world (np.ndarray [K, 3]) and pixels (np.ndarray [K], increasing indices into the S x H x W pixels);
+            (None, None) for "lidar" without depth
     """
-    H, W = recon["points_cam0"].shape[1:3]
-    lidar = recon.get("lidar_cam0")  # window_from_cache
-    if lidar is None and any(p is not None for p in frames.depth_paths):
-        lidar = lidar_points_cam0(frames.depth_paths, frames.K_depth, recon["intrinsics"], (H, W), recon["extrinsics"])
     if plan_source == "lidar":
-        return (None if lidar is None else world_points(lidar, frames.c2w[0])), lidar
-    world = world_points(recon["points_cam0"], frames.c2w[0])
-    world[~recon["mask"]] = np.nan
-    return world, lidar
+        if all(p is None for p in frames.depth_paths):
+            return None, None
+        points = lidar_points_cam0(frames.depth_paths, frames.K_depth, recon["intrinsics"], recon["mask"].shape[1:],
+                                   recon["extrinsics"]).reshape(-1, 3)
+        pixels = np.nonzero(np.isfinite(points).all(axis=1))[0]
+    else:
+        points = recon["points_cam0"].reshape(-1, 3)
+        pixels = np.nonzero(recon["mask"].reshape(-1))[0]
+    return world_points(points[pixels], frames.c2w[0]), pixels
 
 
-def plan_correspondences(world: np.ndarray, plan_params: dict, max_points: int, rng: np.random.Generator,
-                         max_wall_dist_m: float | None = MAX_WALL_DIST_M) -> list:
+def world_grid(world: np.ndarray, pixels: np.ndarray, shape: tuple) -> np.ndarray:
+    """
+    World points of window_world on the pixel grid (visualizations).
+    Args:
+        world (np.ndarray): tensor with shape [K, 3]
+        pixels (np.ndarray): indices of the pixels with shape [K]
+        shape (tuple): (S, H, W)
+
+    Returns:
+        np.ndarray: tensor with shape [S, H, W, 3], NaN where there is no point
+    """
+    grid = np.full((int(np.prod(shape)), 3), np.nan, dtype=np.float32)
+    grid[pixels] = world
+    return grid.reshape(*shape, 3)
+
+
+def plan_correspondences(world: np.ndarray, pixels: np.ndarray, shape: tuple, plan_params: dict, max_points: int,
+                         rng: np.random.Generator, max_wall_dist_m: float | None = MAX_WALL_DIST_M) -> list:
     """
     Per view, the pixels whose 3D points lie on walls of the floorplan (lamar.on_plan) and the floorplan pixels of these points.
     Args:
-        world (np.ndarray): tensor with shape [S, H, W, 3], world points of the pixels (NaN where unused)
+        world (np.ndarray): tensor with shape [K, 3], world points of the pixels (window_world)
+        pixels (np.ndarray): increasing indices of these pixels into the S x H x W pixels, with shape [K]
+        shape (tuple): (S, H, W)
         plan_params (dict): of lamar.load_floorplan
         max_points (int): at most this many correspondences in the window, drawn at random
         rng (np.random.Generator): random generator
@@ -122,13 +141,12 @@ def plan_correspondences(world: np.ndarray, plan_params: dict, max_points: int, 
     Returns:
         list: per view, {"tensor_coords": [N, 2] (u, v) pixels, "plan_coords": [N, 2] floorplan pixels} or None
     """
-    S, H, W, _ = world.shape
-    flat = world.reshape(-1, 3)
-    idx = np.nonzero(on_plan(flat, plan_params, max_wall_dist_m))[0]
-    if len(idx) > max_points:
-        idx = np.sort(rng.choice(idx, max_points, replace=False))
-    plan_px = world_to_plan(flat[idx], plan_params).astype(np.float32)
-    view, pixel = np.divmod(idx, H * W)
+    S, H, W = shape
+    keep = np.nonzero(on_plan(world, plan_params, max_wall_dist_m))[0]
+    if len(keep) > max_points:
+        keep = np.sort(rng.choice(keep, max_points, replace=False))
+    plan_px = world_to_plan(world[keep], plan_params).astype(np.float32)
+    view, pixel = np.divmod(pixels[keep], H * W)
     v, u = np.divmod(pixel, W)
     corrs = []
     for s in range(S):
@@ -180,26 +198,26 @@ def mapanything_sample(recon: dict, corrs: list, conf_thresholds: list, plan_par
     return []
 
 
-def lidar_samples(lidar_cam0: np.ndarray, recon: dict, plan_params: dict, c2w0: np.ndarray, output: str, name: str,
-                  max_wall_dist_m: float | None = MAX_WALL_DIST_M) -> list:
+def lidar_samples(points: np.ndarray, recon: dict, plan_params: dict, c2w0: np.ndarray, output: str, name: str,
+                  max_points: int, rng: np.random.Generator, max_wall_dist_m: float | None = MAX_WALL_DIST_M) -> list:
     """
     Saves the density map of the LiDAR points of a window, seen from above in the gravity-aligned frame of camera 0,
-    with its correspondences (the points on walls), as prepare_s3d.depth_sample: height and x/z percentile filters,
-    gamma 0.5, at least 10 correspondences, no consistency test. Returns its row.
+    with its correspondences (the points on walls, at most max_points at random), as prepare_s3d.depth_sample: height
+    and x/z percentile filters, gamma 0.5, at least 10 correspondences, no consistency test. Returns its row.
     Args:
-        lidar_cam0 (np.ndarray): tensor with shape [S, H, W, 3], NaN where missing
+        points (np.ndarray): tensor with shape [M, 3], LiDAR points in the frame of camera 0 (lamar.lidar_points)
         recon (dict): of reconstruction.reconstruct (gravity and extrinsics)
         plan_params (dict): of lamar.load_floorplan
         c2w0 (np.ndarray): camera-to-world of camera 0 with shape [4, 4]
         output (str): data directory
         name (str): file stem of the window, relative to output
+        max_points (int): most correspondences, drawn at random
+        rng (np.random.Generator): random generator
         max_wall_dist_m (float | None): only the points within this distance of a wall [m], None: all inside the floorplan
 
     Returns:
         list: [] or [row {"density", "correspondences", "camera_density"}]
     """
-    points = lidar_cam0.reshape(-1, 3)
-    points = points[np.isfinite(points).all(axis=1)]
     if len(points) < MIN_DEPTH_CORRESPONDENCES:
         return []
     R_rect = ground_rotation(recon["est_gravity_cam"])
@@ -207,9 +225,11 @@ def lidar_samples(lidar_cam0: np.ndarray, recon: dict, plan_params: dict, c2w0: 
     keep = filter_ground_points(ground)  # highest 5 % and lowest 20 %, x/z 2.5 %: as depth_sample
     ground, points = ground[keep], points[keep]
     proj_params = top_down_projection(ground, R_rect, DENSITY_SIZE)
-    keep = on_plan(world_points(points, c2w0), plan_params, max_wall_dist_m)
-    if keep.sum() < MIN_DEPTH_CORRESPONDENCES:
+    keep = np.nonzero(on_plan(world_points(points, c2w0), plan_params, max_wall_dist_m))[0]
+    if len(keep) < MIN_DEPTH_CORRESPONDENCES:
         return []
+    if len(keep) > max_points:
+        keep = np.sort(rng.choice(keep, max_points, replace=False))
     density_px = get_density_coordinates(ground[keep], proj_params)
     plan_px = world_to_plan(world_points(points[keep], c2w0), plan_params).astype(np.float32)
     corr_path, density_path = f"{name}.npy", f"{name}.png"
@@ -262,8 +282,8 @@ def merge_shards(output: str) -> None:
 def reconstruct_sessions(sessions: dict, args) -> None:
     """
     MapAnything on chunks of consecutive kept frames of every session (lamar.session_chunks), cached in
-    --session_cache/<session>/t<first timestamp>_n<frames> with the LiDAR points of the frames; this shard takes the
-    chunks shard, shard + num_shards, ...; cached chunks are skipped.
+    --session_cache/<session>/t<first timestamp>_n<frames>; this shard takes the chunks shard, shard + num_shards, ...;
+    cached chunks are skipped.
     Args:
         sessions (dict): {name: Session of the kept frames}
         args: of main
@@ -272,7 +292,7 @@ def reconstruct_sessions(sessions: dict, args) -> None:
     jobs = jobs[args.shard::args.num_shards]
     print(f"shard {args.shard}/{args.num_shards}: {len(jobs)} chunks of {sum(len(c) for _, c in jobs)} frames")
     model = None
-    progress = tqdm(jobs, desc=f"shard {args.shard}")
+    progress = tqdm(jobs, desc=f"recon shard {args.shard}", disable=args.shard != 0)  # one bar in the terminal
     for name, chunk in progress:
         frames = sessions[name].subset(chunk)
         directory = os.path.join(args.session_cache, name, f"t{int(frames.timestamps[0])}_n{len(frames)}")
@@ -282,11 +302,7 @@ def reconstruct_sessions(sessions: dict, args) -> None:
         recon = reconstruct(frames.image_paths, frames.K, frames.c2w, model)
         # deviation of the poses predicted by MapAnything from the ground truth (the points use the ground truth)
         progress.set_postfix(pose_err_deg=f"{recon['pose_error_deg'].max():.2f}", pose_err_m=f"{recon['pose_error_m'].max():.3f}")
-        lidar = None
-        if any(p is not None for p in frames.depth_paths):  # in the frame of every camera
-            lidar = lidar_points_cam0(frames.depth_paths, frames.K_depth, recon["intrinsics"], recon["mask"].shape[1:],
-                                      np.tile(np.eye(4), (len(frames), 1, 1)))
-        save_chunk(directory, recon, frames.timestamps, lidar)
+        save_chunk(directory, recon, frames.timestamps)
 
 
 def sample_windows(sessions: dict, args, plan_img, plan_params: dict) -> None:
@@ -315,11 +331,24 @@ def sample_windows(sessions: dict, args, plan_img, plan_params: dict) -> None:
             plan_img.save(os.path.join(epoch_dir(args.output, epoch), plan_path))
             with open(os.path.join(epoch_dir(args.output, epoch), "floorplan", "hge_params.json"), "w") as f:
                 json.dump({k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in plan_params.items() if k != "wall_dist_px"}, f, indent=2)
-    print(f"shard {args.shard}/{args.num_shards}: {len(jobs[args.shard::args.num_shards])} of {len(jobs)} windows")
+    print(f"shard {args.shard}/{args.num_shards}: {len(jobs[args.shard::args.num_shards])} of {len(jobs)} windows", flush=True)
+
+    def write_epoch(epoch: int, epoch_rows: dict) -> None:
+        """The CSV files of this shard for one epoch; windows_<shard>.csv last (complete epoch, skipped on a rerun)."""
+        for kind in (*SOURCES, "windows"):
+            columns = ["name", "session", "timestamps"] if kind == "windows" else CSV_COLUMNS
+            stem = kind if kind == "windows" else f"lamar_{kind}"
+            path = os.path.join(epoch_dir(args.output, epoch), "shards", f"{stem}_{args.shard}.csv")
+            pd.DataFrame(epoch_rows[kind], columns=columns).to_csv(path, index=False)
+        print(f"shard {args.shard}: epoch {epoch} done, " + ", ".join(f"{k} {len(v)}" for k, v in epoch_rows.items()), flush=True)
+
+    def epoch_done(epoch: int) -> bool:
+        return os.path.exists(os.path.join(epoch_dir(args.output, epoch), "shards", f"windows_{args.shard}.csv"))
 
     caches = {}  # memory-mapped
-    rows = {epoch: {source: [] for source in (*SOURCES, "windows")} for epoch in range(args.epochs)}
-    for index in tqdm(range(args.shard, len(jobs), args.num_shards), desc=f"shard {args.shard}"):
+    todo = [i for i in range(args.shard, len(jobs), args.num_shards) if not epoch_done(jobs[i][0])]
+    rows = {source: [] for source in (*SOURCES, "windows")}
+    for k, index in enumerate(tqdm(todo, desc=f"samples shard {args.shard}", disable=args.shard != 0)):
         epoch, session_name, window = jobs[index]
         output = epoch_dir(args.output, epoch)
         frames = sessions[session_name].subset(window)
@@ -327,33 +356,29 @@ def sample_windows(sessions: dict, args, plan_img, plan_params: dict) -> None:
         if session_name not in caches:
             caches[session_name] = SessionCache(os.path.join(args.session_cache, session_name))
         recon = window_from_cache(caches[session_name], frames.timestamps, frames.c2w)
-        world, lidar = window_world(frames, recon, args.plan_source)
-        if world is None:
-            continue
-        rng_window = np.random.default_rng([args.seed, index])  # correspondences and density map, whatever the shards
-        corrs = plan_correspondences(world, plan_params, args.max_points, rng_window, max_wall_dist)
-
-        common = {"scene_id": scene_id_of(frames, args.scene_id, args.cell_m), "floorplan": plan_path,
-                  "rgb": os.path.abspath(frames.image_paths[-1]),
-                  "camera_plan": world_to_plan(frames.c2w[-1, :3, 3], plan_params)}
-        samples = mapanything_sample(recon, corrs, args.conf, plan_params, output, os.path.join("mapanything", name), rng_window)
-        if lidar is not None and not args.no_lidar_samples:
-            samples += lidar_samples(lidar, recon, plan_params, frames.c2w[0], output, os.path.join("lidar", name),
-                                     max_wall_dist)
-        for sample in samples:
-            sample.update(common)
-            sample["camera_plan"] = "{:.2f} {:.2f}".format(*common["camera_plan"])
-            sample["camera_density"] = "{:.2f} {:.2f}".format(*sample["camera_density"])
-            rows[epoch][sample["density"].split(os.sep)[0]].append(sample)
-        rows[epoch]["windows"].append({"name": name, "session": session_name,
-                                       "timestamps": " ".join(str(int(t)) for t in frames.timestamps)})
-
-    for epoch, epoch_rows in rows.items():
-        for kind, kind_rows in epoch_rows.items():
-            columns = ["name", "session", "timestamps"] if kind == "windows" else CSV_COLUMNS
-            stem = kind if kind == "windows" else f"lamar_{kind}"
-            path = os.path.join(epoch_dir(args.output, epoch), "shards", f"{stem}_{args.shard}.csv")
-            pd.DataFrame(kind_rows, columns=columns).to_csv(path, index=False)
+        world, pixels = window_world(frames, recon, args.plan_source)
+        if world is not None:
+            rng_window = np.random.default_rng([args.seed, index])  # correspondences and density map, whatever the shards
+            corrs = plan_correspondences(world, pixels, recon["mask"].shape, plan_params, args.max_points, rng_window,
+                                         max_wall_dist)
+            common = {"scene_id": scene_id_of(frames, args.scene_id, args.cell_m), "floorplan": plan_path,
+                      "rgb": os.path.abspath(frames.image_paths[-1]),
+                      "camera_plan": world_to_plan(frames.c2w[-1, :3, 3], plan_params)}
+            samples = mapanything_sample(recon, corrs, args.conf, plan_params, output, os.path.join("mapanything", name), rng_window)
+            if not args.no_lidar_samples and any(p is not None for p in frames.depth_paths):
+                samples += lidar_samples(lidar_points(frames.depth_paths, frames.K_depth, recon["extrinsics"]), recon,
+                                         plan_params, frames.c2w[0], output, os.path.join("lidar", name),
+                                         args.max_points, rng_window, max_wall_dist)
+            for sample in samples:
+                sample.update(common)
+                sample["camera_plan"] = "{:.2f} {:.2f}".format(*common["camera_plan"])
+                sample["camera_density"] = "{:.2f} {:.2f}".format(*sample["camera_density"])
+                rows[sample["density"].split(os.sep)[0]].append(sample)
+            rows["windows"].append({"name": name, "session": session_name,
+                                    "timestamps": " ".join(str(int(t)) for t in frames.timestamps)})
+        if k + 1 == len(todo) or jobs[todo[k + 1]][0] != epoch:  # the jobs are in epoch order
+            write_epoch(epoch, rows)
+            rows = {source: [] for source in (*SOURCES, "windows")}
     if args.num_shards == 1:
         merge_shards(args.output)
 

@@ -22,7 +22,7 @@ set -euo pipefail
 LAMAR_ROOT="${LAMAR_ROOT:-/groups/gai51740/RBT3/umemura/zfloc/lamar}"
 MAP_DIR="${MAP_DIR:-$LAMAR_ROOT/HGE/sessions/map}"
 FLOORPLAN="${FLOORPLAN:-$LAMAR_ROOT/hge.png}"
-DATA="${DATA:-data/lamar_hge}"
+DATA="${DATA:-/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar}"
 RTYPE="${RTYPE:-rt_HG}"
 CHECKPOINT="${CHECKPOINT:-outputs/lamar_$(basename "$DATA")_${RTYPE}}"
 PLAN_SIZE="${PLAN_SIZE:-1024}"
