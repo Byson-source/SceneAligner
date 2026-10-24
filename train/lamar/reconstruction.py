@@ -178,9 +178,8 @@ class SessionCache:
         chunk = np.searchsorted(self.starts, pos, side="right") - 1
         first = self.chunks[0][key]
         out = np.empty((len(pos), *first.shape[1:]), dtype=first.dtype)
-        for c in np.unique(chunk):
-            sel = chunk == c
-            out[sel] = self.chunks[c][key][pos[sel] - self.starts[c]]
+        for i, (c, p) in enumerate(zip(chunk, pos)):  # one copy per frame: ~30x faster than fancy indexing a memmap
+            out[i] = self.chunks[c][key][p - self.starts[c]]
         return out
 
 
@@ -201,12 +200,16 @@ def window_from_cache(parts: list, c2w: np.ndarray, images: bool = False) -> dic
         return np.concatenate([cache.take(key, ts) for cache, ts in parts])
 
     extrinsics = relative_extrinsics(c2w)
-    R, t = extrinsics[:, None, :3, :3].astype(np.float32), extrinsics[:, None, None, :3, 3].astype(np.float32)
+    R, t = extrinsics[:, :3, :3].astype(np.float32), extrinsics[:, :3, 3].astype(np.float32)
     mask = take("mask")
-    points = take("points_cam").astype(np.float32) @ R.transpose(0, 1, 3, 2)
-    points += t
-    points[~mask] = 0.0
+    local = take("points_cam")
     S, H, W = mask.shape
+    points = np.empty((S, H, W, 3), dtype=np.float32)
+    for i in range(S):  # one BLAS product per frame (a batched product over the rows is much slower)
+        frame = points[i].reshape(-1, 3)
+        np.matmul(local[i].reshape(-1, 3).astype(np.float32), R[i].T, out=frame)
+        frame += t[i]
+    points *= mask[..., None]  # 0 where masked (faster than boolean indexing)
     recon = {"points_cam0": points, "conf": take("conf"), "mask": mask,
              "extrinsics": extrinsics.astype(np.float64), "est_gravity_cam": gravity_cam0(c2w[0]),
              "image_sizes": np.tile(np.array([[W, H]]), (S, 1)), "intrinsics": take("intrinsics"),

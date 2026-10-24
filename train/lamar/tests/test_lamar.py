@@ -258,3 +258,23 @@ def test_lidar_points(tmp_path):
     points = lamar.lidar_points([path, None, path], np.stack([K, K, K]), ext)  # frame 1 without depth
     assert points.shape == (2 * 23, 3) and np.allclose(points[:, 2], 2.0)
     assert np.allclose(points[23:, 0] - points[:23, 0], 1.0)  # second depth map moved by the extrinsics of frame 2
+
+
+def test_projection_geometry_as_scenealigner():
+    prepare_lamar = pytest.importorskip("prepare_lamar")  # torch, scenealigner
+    from scenealigner.inference import reconstruct_projection_geometry
+
+    rng = np.random.default_rng(0)
+    S, H, W = 4, 30, 40
+    recon = {"points_cam0": rng.uniform(-5, 5, (S, H, W, 3)).astype(np.float32),
+             "conf": rng.uniform(1, 5, (S, H, W)).astype(np.float32), "est_gravity_cam": np.array([0.1, 0.9, 0.2])}
+    keep = rng.random((S, H, W)) < 0.7
+    ground = prepare_lamar.kept_ground_points(recon, keep)
+    params, points, mask = prepare_lamar.projection_geometry(ground, (S, H, W), 45, 2.5)
+    ref_params, ref_points, ref_mask = reconstruct_projection_geometry(recon["points_cam0"][keep], recon["conf"][keep],
+                                                                       recon["est_gravity_cam"], 45, 2.5, density_size=512)
+    assert np.array_equal(mask[keep], ref_mask) and not mask[~keep].any()
+    assert np.allclose(points, ref_points, atol=1e-5)
+    for k in ("min_x", "min_z", "scale", "cx", "cz"):
+        assert np.isclose(params[k], ref_params[k], rtol=1e-5), k
+    assert np.allclose(params["R_rect"], ref_params["R_rect"])

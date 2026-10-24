@@ -232,8 +232,10 @@ def world_to_plan_full(points: np.ndarray, A: np.ndarray) -> np.ndarray:
         A (np.ndarray): affine matrix with shape [2, 3]
 
     Returns:
-        np.ndarray: tensor with shape [..., 2], (u, v) pixels of hge.png
+        np.ndarray: tensor with shape [..., 2], (u, v) pixels of hge.png (float32 for float32 points: much faster
+            than mixing them with the float64 matrix)
     """
+    A = A.astype(np.result_type(points, np.float32))
     return points[..., :2] @ A[:, :2].T + A[:, 2]
 
 
@@ -336,13 +338,13 @@ def on_wall(points: np.ndarray, plan_params: dict, max_dist_m: float = 0.2) -> n
         np.ndarray: boolean tensor with shape [N]
     """
     px = world_to_plan_full(points, plan_params["A"])
+    width, height = plan_params["full_size"]
     result = np.zeros(len(px), dtype=bool)
-    valid = np.isfinite(px).all(axis=1)
-    valid[valid] &= in_bounds(px[valid])
-    idx = np.round(px[valid]).astype(int)
-    idx[:, 0] = np.clip(idx[:, 0], 0, plan_params["full_size"][0] - 1)
-    idx[:, 1] = np.clip(idx[:, 1], 0, plan_params["full_size"][1] - 1)
-    result[valid] = plan_params["wall_dist_px"][idx[:, 1], idx[:, 0]] * plan_params["m_per_px"] <= max_dist_m
+    valid = in_bounds(px, plan_params["full_size"])  # False for NaN
+    u = np.clip(np.round(px[valid, 0]).astype(np.int32), 0, width - 1)
+    v = np.clip(np.round(px[valid, 1]).astype(np.int32), 0, height - 1)
+    wall = (plan_params["wall_dist_px"] * plan_params["m_per_px"] <= max_dist_m).reshape(-1)  # [height * width]
+    result[valid] = wall[v * width + u]
     return result
 
 

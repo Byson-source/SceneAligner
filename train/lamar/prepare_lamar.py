@@ -43,7 +43,7 @@ from lamar import (CHUNK_SIZE, MIX_PROB, MIX_RADIUS_M, TRAIN_FRAMES, TRAIN_MAX_S
                    top_down_projection, train_frames, window_name, world_to_plan)
 from reconstruction import SessionCache, load_mapanything, reconstruct, save_chunk, window_from_cache  # noqa: E402
 from scenealigner.evaluation import get_camera_center_on_density_px, process_gt_correspondences  # noqa: E402
-from scenealigner.inference import get_density_coordinates, reconstruct_projection_geometry  # noqa: E402
+from scenealigner.inference import get_density_coordinates  # noqa: E402
 from scenealigner.training import render_training_map  # noqa: E402
 
 GAMMAS = (0.25, 0.5, 0.75, 1.0)  # prepare_c3.py
@@ -84,18 +84,20 @@ def world_points(points_cam0: np.ndarray, c2w0: np.ndarray) -> np.ndarray:
         c2w0 (np.ndarray): camera-to-world of camera 0 with shape [4, 4]
 
     Returns:
-        np.ndarray: tensor with shape [..., 3]
+        np.ndarray: tensor with shape [..., 3], of the dtype of points_cam0 (float32: much faster than float64)
     """
+    c2w0 = c2w0.astype(np.result_type(points_cam0, np.float32))
     return points_cam0 @ c2w0[:3, :3].T + c2w0[:3, 3]
 
 
-def window_world(frames: Session, recon: dict, plan_source: str) -> tuple:
+def window_world(frames: Session, recon: dict, plan_source: str, keep: np.ndarray | None = None) -> tuple:
     """
     World points of the pixels of a window from which the correspondences are drawn: only the pixels with a point.
     Args:
         frames (Session): the frames of the window
         recon (dict): of reconstruction.reconstruct
         plan_source (str): "recon" (reconstructed points) or "lidar" (LiDAR points on the pixel grid)
+        keep (np.ndarray | None): boolean tensor with shape [S, H, W], only these pixels; None: all
 
     Returns:
         tuple: world (np.ndarray [K, 3]) and pixels (np.ndarray [K], increasing indices into the S x H x W pixels);
@@ -106,10 +108,11 @@ def window_world(frames: Session, recon: dict, plan_source: str) -> tuple:
             return None, None
         points = lidar_points_cam0(frames.depth_paths, frames.K_depth, recon["intrinsics"], recon["mask"].shape[1:],
                                    recon["extrinsics"]).reshape(-1, 3)
-        pixels = np.nonzero(np.isfinite(points).all(axis=1))[0]
+        valid = np.isfinite(points).all(axis=1)
     else:
         points = recon["points_cam0"].reshape(-1, 3)
-        pixels = np.nonzero(recon["mask"].reshape(-1))[0]
+        valid = recon["mask"].reshape(-1)
+    pixels = np.nonzero(valid if keep is None else valid & keep.reshape(-1))[0]
     return world_points(points[pixels], frames.c2w[0]), pixels
 
 
@@ -162,26 +165,54 @@ def plan_correspondences(world: np.ndarray, pixels: np.ndarray, shape: tuple, pl
     return corrs
 
 
-def projection_geometry(recon: dict, conf: float, xz: float, keep: np.ndarray | None) -> tuple:
+def kept_ground_points(recon: dict, keep: np.ndarray | None) -> tuple:
     """
-    scenealigner.inference.reconstruct_projection_geometry of the kept pixels only (their percentiles).
+    The points of the kept pixels in the gravity-aligned ground frame of camera 0, and their confidences, in float32
+    (mixing float32 points with the float64 rotation, or indexing with an [S, H, W] mask, is several times slower).
     Args:
         recon (dict): of reconstruction.reconstruct
-        conf (float): confidence threshold (percentile)
-        xz (float): x/z slice
         keep (np.ndarray | None): boolean tensor with shape [S, H, W], the pixels kept; None: all
+
+    Returns:
+        tuple: R_rect [3, 3] (camera 0 -> ground), indices of the kept pixels [K], their points [K, 3] and confidences [K]
+    """
+    R_rect = ground_rotation(recon["est_gravity_cam"])  # +Y along gravity, as reconstruct_projection_geometry
+    idx = np.arange(recon["conf"].size) if keep is None else np.flatnonzero(keep)
+    points = recon["points_cam0"].reshape(-1, 3)[idx] @ R_rect.T.astype(np.float32)
+    return R_rect, idx, points, recon["conf"].reshape(-1)[idx]
+
+
+def projection_geometry(ground: tuple, shape: tuple, conf: float, xz: float) -> tuple:
+    """
+    scenealigner.inference.reconstruct_projection_geometry of the kept points (the same filters and projection).
+    Args:
+        ground (tuple): of kept_ground_points
+        shape (tuple): (S, H, W)
+        conf (float): confidence threshold (percentile)
+        xz (float): x/z slice (percentile)
 
     Returns:
         tuple: projection parameters, the points of the density map [N, 3] (ground frame) and their mask [S, H, W]
     """
-    if keep is None:
-        return reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"], conf, xz,
-                                               density_size=DENSITY_SIZE)
-    proj_params, points, kept_mask = reconstruct_projection_geometry(recon["points_cam0"][keep], recon["conf"][keep],
-                                                                     recon["est_gravity_cam"], conf, xz, density_size=DENSITY_SIZE)
-    mask = np.zeros(keep.shape, dtype=bool)
-    mask[keep] = kept_mask
-    return proj_params, points, mask
+    R_rect, idx, points, confidences = ground
+    # Confidence, height (+Y is down: top 5% and bottom 20% removed) and x/z percentile filters
+    mask = confidences > np.percentile(confidences, conf)
+    ceil_cutoff, floor_cutoff = np.percentile(points[mask, 1], [5.0, 80.0])
+    mask &= (points[:, 1] >= ceil_cutoff) & (points[:, 1] <= floor_cutoff)
+    x_min, x_max = np.percentile(points[mask, 0], [xz, 100 - xz])
+    z_min, z_max = np.percentile(points[mask, 2], [xz, 100 - xz])
+    mask &= (points[:, 0] >= x_min) & (points[:, 0] <= x_max) & (points[:, 2] >= z_min) & (points[:, 2] <= z_max)
+    points = points[mask]
+    # Scale and offsets that center the points in the map, with a margin
+    min_x, min_z = points[:, 0].min(), points[:, 2].min()
+    width_m, height_m = points[:, 0].max() - min_x, points[:, 2].max() - min_z
+    scale = (DENSITY_SIZE * (1 - 0.1 * 2)) / max(width_m, height_m)
+    proj_params = {"R_rect": R_rect, "min_x": min_x, "min_z": min_z, "scale": scale,
+                   "cx": (DENSITY_SIZE - width_m * scale) / 2, "cz": (DENSITY_SIZE - height_m * scale) / 2,
+                   "density_size": DENSITY_SIZE}
+    full_mask = np.zeros(int(np.prod(shape)), dtype=bool)
+    full_mask[idx[mask]] = True
+    return proj_params, points, full_mask.reshape(shape)
 
 
 def mapanything_sample(recon: dict, corrs: list, conf_thresholds: list, plan_params: dict, output: str, name: str,
@@ -204,9 +235,10 @@ def mapanything_sample(recon: dict, corrs: list, conf_thresholds: list, plan_par
         list: [] or [row {"density", "correspondences", "camera_density"}]
     """
     pairs_conf_xz = [(conf, xz) for conf in conf_thresholds for xz in XZ_SLICES]
+    ground = kept_ground_points(recon, keep)
     for i in rng.permutation(len(pairs_conf_xz)):
         conf, xz = pairs_conf_xz[i]
-        proj_params, points, mask = projection_geometry(recon, conf, xz, keep)
+        proj_params, points, mask = projection_geometry(ground, recon["conf"].shape, conf, xz)
         pairs = [process_gt_correspondences(corr, s, recon["points_cam0"], proj_params, mask)
                  for s, corr in enumerate(corrs) if corr is not None]
         pairs = [pair for pair in pairs if len(pair[0]) >= MIN_VIEW_CORRESPONDENCES]
@@ -247,7 +279,7 @@ def lidar_samples(points: np.ndarray, recon: dict, plan_params: dict, c2w0: np.n
     if len(points) < MIN_DEPTH_CORRESPONDENCES:
         return []
     R_rect = ground_rotation(recon["est_gravity_cam"])
-    ground = points @ R_rect.T
+    ground = points @ R_rect.T.astype(np.float32)
     keep = filter_ground_points(ground)  # highest 5 % and lowest 20 %, x/z 2.5 %: as depth_sample
     ground, points = ground[keep], points[keep]
     proj_params = top_down_projection(ground, R_rect, DENSITY_SIZE)
@@ -370,13 +402,11 @@ def window_rows(index: int) -> tuple[int, dict]:
     rng = np.random.default_rng([args.seed, index])  # dropped pixels, correspondences and density map
     fractions = rng.uniform(args.min_keep, 1.0, len(frames))
     keep = rng.random(recon["mask"].shape) < fractions[:, None, None]
-    world, pixels = window_world(frames, recon, args.plan_source)
+    world, pixels = window_world(frames, recon, args.plan_source, keep)
     if world is None:
         return index, rows
-    kept = keep.reshape(-1)[pixels]
     max_wall_dist = None if args.max_wall_dist < 0 else args.max_wall_dist
-    corrs = plan_correspondences(world[kept], pixels[kept], recon["mask"].shape, plan_params, args.max_points, rng,
-                                 max_wall_dist)
+    corrs = plan_correspondences(world, pixels, recon["mask"].shape, plan_params, args.max_points, rng, max_wall_dist)
     samples = mapanything_sample(recon, corrs, args.conf, plan_params, output, os.path.join("mapanything", name), rng, keep)
     if not args.no_lidar_samples and any(p is not None for p in frames.depth_paths):
         lidar = lidar_points(frames.depth_paths, frames.K_depth, recon["extrinsics"], fractions, rng)
