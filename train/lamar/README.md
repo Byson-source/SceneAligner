@@ -137,7 +137,7 @@ Every 100 steps the losses go to `log.csv` and wandb; every `--vis_every` 500 st
 the wandb panel `sample` show the floorplan of the first sample of the batch with the ground-truth (green) and
 predicted (orange) correspondences, the ground-truth (blue) and estimated (red) position of the last camera, next
 to its photo. Every job of `train.sh` writes a new run `outputs/lamar_<data>_<RTYPE>_<YYYYmmdd_HHMMSS>`; to
-continue a run after its last completed epoch (e.g. at the walltime), `qsub -v RESUME=<run> shells/train/lamar_hf.sh`
+continue a run after its last completed epoch (e.g. at the walltime), `qsub -v RTYPE=rt_HF,RESUME=<run> shells/train/lamar_hf.sh`
 (`train.py --resume`: LoRA layers, optimizer, step and wandb run of `<run>/state.pt`). Without `--resume`,
 `train.py` refuses an `--output` that already has a `state.pt`.
 
@@ -174,7 +174,7 @@ The jobs in `shells/` (PBS, conda environment `scenealigner`) run in `REPO`, by 
 qsub shells/lamar/download_lamar.sh                                        # raw sessions, HGE/sessions/map, hge.png
 qsub shells/lamar/prepare_hg.sh                                            # lamar.py --check, prepare_lamar.py -> /groups/gai51740/RBT3/umemura/zfloc/dataset/lamar
 qsub shells/train/lamar_hg.sh                                              # train.py -> outputs/lamar_lamar_rt_HG_<date>_<time>, wandb
-qsub -v CHECKPOINT=outputs/lamar_lamar_rt_HG_<date>_<time> shells/lamar/evaluate_hg.sh  # val, then test
+qsub -v RTYPE=rt_HG,CHECKPOINT=outputs/lamar_lamar_rt_HG_<date>_<time> shells/lamar/evaluate_hg.sh  # val, then test
 ```
 
 `prepare.sh` runs `--stage recon` with one process per GPU of the node (`--workers`), then `--stage samples` with
@@ -192,13 +192,13 @@ a batch of 4 windows per GPU: 32 on rt_HF, lr unchanged); the points of the batc
 of the feature matching loss (all_gather), and the logs are the mean over the GPUs.
 
 `prepare.sh` also makes one set of windows of the val session in `$DATA/val/epoch_000` (`SPLITS`, default
-`train val`; only the val windows: `qsub -v SPLITS=val shells/lamar/prepare_hf.sh`). `train.py` takes the windows of
+`train val`; only the val windows: `qsub -v RTYPE=rt_HF,SPLITS=val shells/lamar/prepare_hf.sh`). `train.py` takes the windows of
 `<data>/epoch_<e>` at epoch e (in turn if there are fewer sets than epochs). When they exist, `train.sh` passes them to
 `train.py --val_data`, which computes the losses, `acc` and `chance` on them after every epoch (the same
 augmentations at every epoch, seeded by `--seed`) and logs them to wandb (`val/...`) and `<run>/val_log.csv`.
 
 `REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `WINDOWS`, `NUM_GPUS`, `NUM_WORKERS`, `CACHE`, `SPLITS`, `VAL_DATA`, `RESUME`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
-`qsub -v`, e.g. `qsub -v DATA=<data>,EPOCHS=4 shells/train/lamar_hf.sh`. The cached reconstructions of an
+`qsub -v`, e.g. `qsub -v RTYPE=rt_HF,DATA=<data>,EPOCHS=4 shells/train/lamar_hf.sh`; `qsub -v` replaces the `#PBS -v RTYPE=...` of the script, so `RTYPE` (`rt_HF` for `_hf`, `rt_HG` for `_hg`) is always given with it (RESERVE service). The cached reconstructions of an
 older version (`<session>_s<start>_L<length>.npz`, indexed by the frames of other filters), the per-window cache
 `$DATA/recon_cache` and the samples directly in `$DATA` (`mapanything/`, `lidar/`, `lamar_*.csv`) of the previous
 version are not used and can be deleted.

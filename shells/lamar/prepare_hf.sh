@@ -7,5 +7,5 @@
 #PBS -m abe
 #PBS -k oed
 # LaMAR HGE training data (rt_HF). Submit from any directory: qsub shells/lamar/prepare_hf.sh
-REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v REPO=<dir>
+REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v RTYPE=rt_HF,REPO=<dir>
 REPO="$REPO" DATA="${DATA:-/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar}" RTYPE=rt_HF bash "$REPO/shells/lamar/prepare.sh"

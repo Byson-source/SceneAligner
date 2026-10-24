@@ -8,17 +8,17 @@
 #PBS -k oed
 # Training of the LoRA layers on the LaMAR HGE data of prepare_lamar.py, logged to wandb. Epoch e takes the windows
 # of $DATA/epoch_<e> (other windows at every epoch; in turn if prepare.sh made fewer sets than EPOCHS).
-# Called by lamar_hf.sh / lamar_hg.sh with DATA and RTYPE; can be submitted alone: qsub -v DATA=<data> shells/train/train.sh
+# Called by lamar_hf.sh / lamar_hg.sh with DATA and RTYPE; can be submitted alone: qsub -v RTYPE=rt_HG,DATA=<data> shells/train/train.sh
 # Hyperparameters of the Structured3D training of SceneAligner (--epochs 20 --min_points 1000, one resolution: that of
 # the floorplan, 1024 here). Every job writes a new run (outputs/<...>_<date>_<time>);
-# qsub -v RESUME=<run> continues <run> after its last completed epoch (<run>/state.pt).
+# qsub -v RTYPE=rt_HG,RESUME=<run> continues <run> after its last completed epoch (<run>/state.pt).
 # One process per GPU of the node (torchrun, DistributedDataParallel; rt_HF: 8, rt_HG: 1), a batch of 4 per GPU.
 
 source /etc/profile.d/modules.sh
 export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner
 export PATH="${CONDA_PREFIX}/bin:$PATH"  # activate is a no-op when the caller already activated the env: keep it before base
 export OMP_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 MKL_NUM_THREADS=1
-REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v REPO=<dir>
+REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v RTYPE=rt_HG,REPO=<dir>
 cd "$REPO"
 set -euo pipefail
 
@@ -26,7 +26,7 @@ DATA="${DATA:-/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar}"
 RTYPE="${RTYPE:-rt_HG}"
 RUN="${RUN:-${RESUME:-outputs/lamar_$(basename "$DATA")_${RTYPE}_$(date +%Y%m%d_%H%M%S)}}"  # a new run per job
 resume_args=()
-if [[ -n "${RESUME:-}" ]]; then resume_args=(--resume); fi  # qsub -v RESUME=<run>: continues that run
+if [[ -n "${RESUME:-}" ]]; then resume_args=(--resume); fi  # qsub -v RTYPE=rt_HG,RESUME=<run>: continues that run
 EPOCHS="${EPOCHS:-20}"
 WANDB_PROJECT="${WANDB_PROJECT:-scenealigner-lamar}"
 NEGATIVES="${NEGATIVES:-batch}"  # the other windows of the batch are negatives (all windows share the floorplan)

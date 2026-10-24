@@ -34,7 +34,7 @@
   - 対応点: S3D と同じく壁上の点のみ。許容幅は hge.png の壁から 0.2 m (0.5 m は緩すぎるとしてユーザー判断で戻した。遠い壁の点は減る)。
   - 学習: S3D の `--epochs 20 --min_points 1000`、解像度は plan と同じ単一 1024。density map は学習・評価とも 512。
 - floorplan (`hge.png` 3278×2334, 再配布不可) は `--plan_size 1024` に縮小して入力 (原寸は ViT の token 数で不可、512 は 1 m = 2.9 px で粗い)。
-- upstream に無い追加は `--negatives batch --plan_grid 8` と plan の壁を 0.5 m に太らせる処理のみ (ユーザー承認済み)。negatives/plan_grid は、初回 run が feat が chance = ln 1024 に張り付いた: 窓の点が plan 上の数 patch に固まり、負例が同 sample 内だけだったため。`acc`・`chance` も記録。run は job ごとに `outputs/lamar_<data>_<RTYPE>_<日付_時刻>` に新規作成 (上書き防止)。再開は `qsub -v RESUME=<run>` (`train.py --resume`、`<run>/state.pt` から epoch 単位、wandb run も継続)。`--resume` 無しで state.pt がある output はエラー。
+- upstream に無い追加は `--negatives batch --plan_grid 8` と plan の壁を 0.5 m に太らせる処理のみ (ユーザー承認済み)。negatives/plan_grid は、初回 run が feat が chance = ln 1024 に張り付いた: 窓の点が plan 上の数 patch に固まり、負例が同 sample 内だけだったため。`acc`・`chance` も記録。run は job ごとに `outputs/lamar_<data>_<RTYPE>_<日付_時刻>` に新規作成 (上書き防止)。再開は `qsub -v RTYPE=rt_HG,RESUME=<run>` (`train.py --resume`、`<run>/state.pt` から epoch 単位、wandb run も継続)。`--resume` 無しで state.pt がある output はエラー。
 - 学習は wandb (`--wandb_project`)。`--vis_every` step ごとに floorplan 上の対応点 (GT 緑 / 予測 橙)・現在位置 (GT 青 / 推定 赤) と現在フレーム RGB を hstack して保存・ログ。
 
 構成
@@ -55,5 +55,5 @@
 1. `qsub shells/lamar/download_lamar.sh`
 2. `python train/lamar/lamar.py --check ...` で session 解決・z-up・kept 数 (410/397/483)・depth 一致率を確認
 3. 1 窓の smoke (MapAnything の pose が GT と一致、対応点の相似フィット det>0)
-4. ベースライン: `qsub -v CHECKPOINT=pre-trained shells/lamar/evaluate_hg.sh`、`CHECKPOINT=jhcho99/SceneAligner`
-5. `qsub shells/lamar/prepare_hg.sh` → `qsub shells/train/lamar_hg.sh` → `qsub -v CHECKPOINT=<run> shells/lamar/evaluate_hg.sh`
+4. ベースライン: `qsub -v RTYPE=rt_HG,CHECKPOINT=pre-trained shells/lamar/evaluate_hg.sh`、`CHECKPOINT=jhcho99/SceneAligner`
+5. `qsub shells/lamar/prepare_hg.sh` → `qsub shells/train/lamar_hg.sh` → `qsub -v RTYPE=rt_HG,CHECKPOINT=<run> shells/lamar/evaluate_hg.sh`

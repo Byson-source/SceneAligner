@@ -10,13 +10,13 @@
 # density maps of random windows assembled from the cached points: other windows at every epoch of train.py
 # ($DATA/epoch_<e>), and one set of val windows ($DATA/val/epoch_000, validation of train.py).
 # Called by prepare_hf.sh / prepare_hg.sh with DATA and RTYPE. NUM_GPUS: MapAnything processes (default: the GPUs
-# of the node); NUM_WORKERS: CPU processes of the windows. e.g. qsub -v EPOCHS=40,WINDOWS=100 shells/lamar/prepare_hf.sh
+# of the node); NUM_WORKERS: CPU processes of the windows. e.g. qsub -v RTYPE=rt_HF,EPOCHS=40,WINDOWS=100 shells/lamar/prepare_hf.sh
 
 source /etc/profile.d/modules.sh
 export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner
 export PATH="${CONDA_PREFIX}/bin:$PATH"  # activate is a no-op when the caller already activated the env: keep it before base
 export OMP_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 MKL_NUM_THREADS=1
-REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v REPO=<dir>
+REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v RTYPE=rt_HG,REPO=<dir>
 cd "$REPO"
 set -euo pipefail
 
@@ -32,7 +32,7 @@ python -c "import sys; print('python:', sys.executable, sys.version.split()[0])"
 
 python train/lamar/lamar.py --check --map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" --floorplan "$FLOORPLAN" --plan_size "$PLAN_SIZE"
 
-SPLITS="${SPLITS:-train val}"  # train -> $DATA, val -> $DATA/val (validation of train.py); e.g. qsub -v SPLITS=val
+SPLITS="${SPLITS:-train val}"  # train -> $DATA, val -> $DATA/val (validation of train.py); e.g. qsub -v RTYPE=rt_HG,SPLITS=val
 EPOCHS="${EPOCHS:-20}"         # sets of train windows, one per epoch of train.py ($DATA/epoch_<e>); val: one set
 WINDOWS="${WINDOWS:-50}"       # random windows per session and epoch, every one a different combination of frames
 CACHE="${CACHE:-$DATA/session_cache}"  # MapAnything on chunks of the sessions, shared by train and val

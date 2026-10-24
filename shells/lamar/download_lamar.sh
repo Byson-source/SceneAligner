@@ -9,7 +9,7 @@
 # Downloads and extracts the raw LaMAR HGE phone sessions needed by train/lamar/split.yaml.
 #
 #   qsub ~/oss/SceneAligner/shells/lamar/download_lamar.sh               # from any directory
-#   qsub -v LAMAR_ROOT=<dir>,ARGS="--all --rm-zip" shells/lamar/download_lamar.sh
+#   qsub -v RTYPE=rt_HG,LAMAR_ROOT=<dir>,ARGS="--all --rm-zip" shells/lamar/download_lamar.sh
 #   bash shells/lamar/download_lamar.sh [LAMAR_ROOT] [--all] [--rm-zip]
 #
 # LAMAR_ROOT (argument or environment variable) defaults to /groups/gai51740/RBT3/umemura/zfloc/lamar. Each
@@ -23,7 +23,7 @@
 # not redistributable and is copied from FLOORPLAN_SRC when that file exists.
 set -euo pipefail
 
-REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v REPO=<dir>
+REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v RTYPE=rt_HG,REPO=<dir>
 SPLIT="${SPLIT:-$REPO/train/lamar/split.yaml}"
 LAMAR_ROOT="${LAMAR_ROOT:-/groups/gai51740/RBT3/umemura/zfloc/lamar}"
 RAW_URL="${RAW_URL:-https://cvg-data.inf.ethz.ch/lamar/raw/HGE/sessions}"
