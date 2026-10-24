@@ -34,7 +34,7 @@ python train/lamar/lamar.py --check --map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT"
 
 SPLITS="${SPLITS:-train val}"  # train -> $DATA, val -> $DATA/val (validation of train.py); e.g. qsub -v RTYPE=rt_HG,SPLITS=val
 EPOCHS="${EPOCHS:-20}"         # sets of train windows, one per epoch of train.py ($DATA/epoch_<e>); val: one set
-WINDOWS="${WINDOWS:-17728}"    # random windows per epoch (x 2 samples = 1108 steps of 32), all different combinations of frames
+WINDOWS="${WINDOWS:-8864}"     # random windows per epoch (x 2 samples = 554 steps of 32, half the 1108 before), all different combinations of frames
 VAL_WINDOWS="${VAL_WINDOWS:-600}"  # val windows (one set)
 CACHE="${CACHE:-$DATA/session_cache}"  # MapAnything on chunks of the sessions, shared by train and val
 NUM_GPUS="${NUM_GPUS:-$(nvidia-smi -L | wc -l)}"

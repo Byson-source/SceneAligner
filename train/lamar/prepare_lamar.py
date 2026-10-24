@@ -462,8 +462,8 @@ def main():
     parser.add_argument("--chunk_size", type=int, default=CHUNK_SIZE, help="most frames reconstructed together "
                         "(delete --session_cache after changing it)")
     parser.add_argument("--epochs", type=int, default=20, help="sets of windows, one per training epoch")
-    parser.add_argument("--windows_per_epoch", type=int, default=17728, help="random windows per epoch (two samples "
-                        "each: 35456, 1108 steps of 32 as the 600 windows x 60 density maps before)")
+    parser.add_argument("--windows_per_epoch", type=int, default=8864, help="random windows per epoch (two samples "
+                        "each: 17728, 554 steps of 32, half the 600 windows x 60 density maps before)")
     parser.add_argument("--num_frames", type=int, nargs=2, default=list(TRAIN_FRAMES), help="min and max frames of a window")
     parser.add_argument("--max_spread", type=int, default=TRAIN_MAX_SPREAD,
                         help="the n frames of a window are drawn among n to max_spread * n consecutive frames")

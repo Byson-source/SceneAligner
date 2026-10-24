@@ -10,7 +10,7 @@ removed from this fork) where correspondences come from ground-truth geometry in
 
 | | C3 (`prepare_c3.py`) | Structured3D (`prepare_s3d.py`) | LaMAR HGE (`prepare_lamar.py`) |
 |---|---|---|---|
-| reconstruction | pi3 / VGGT, 50 to 150 photos, or one | pi3, one view | MapAnything with ground-truth intrinsics and relative poses on chunks of up to 500 consecutive frames of a session (cached); per epoch, 17728 random windows assembled from the cached points: 50 to 500 frames drawn among n to 8 n consecutive frames, in half of them a quarter to a half from other sessions within 2 m, a random 25 to 100 % of the pixels of every frame, every window a different combination of frames |
+| reconstruction | pi3 / VGGT, 50 to 150 photos, or one | pi3, one view | MapAnything with ground-truth intrinsics and relative poses on chunks of up to 500 consecutive frames of a session (cached); per epoch, 8864 random windows assembled from the cached points: 50 to 500 frames drawn among n to 8 n consecutive frames, in half of them a quarter to a half from other sessions within 2 m, a random 25 to 100 % of the pixels of every frame, every window a different combination of frames |
 | gravity | GeoCalib | GeoCalib | ground-truth pose (z-up world) |
 | reconstruction samples | conf 30/45/60/75/90 x x/z 0/2.5/5 x gamma 0.25/0.5/0.75/1 | conf 45, x/z 2.5, gamma 0.5 | one of those of C3 per window, at random |
 | ground-truth geometry samples | - | density map of the ground-truth depth | density map of the LiDAR depth maps |
@@ -93,8 +93,8 @@ caches them in `<data>/session_cache/<session>/t<first timestamp>_n<frames>/` (`
 points of every frame in its own camera frame (float16, memory-mapped), its confidence, mask, image and intrinsics.
 Delete the cache after changing `--chunk_size` (`lidar_cam.npy` of an older version is not used).
 
-`--stage samples` draws, for each of `--epochs` epochs, `--windows_per_epoch 17728` random windows
-(`lamar.sample_epoch_windows`; with a LiDAR sample each, 35456 samples, the 1108 steps of 32 of an epoch of the 600
+`--stage samples` draws, for each of `--epochs` epochs, `--windows_per_epoch 8864` random windows
+(`lamar.sample_epoch_windows`; with a LiDAR sample each, 17728 samples, 554 steps of 32: half the 1108 of an epoch of the 600
 windows x 60 density maps before):
 - a session drawn proportionally to its kept frames, a run of kept frames drawn proportionally to its length, n = 50
   to 500 frames (`--num_frames`, at most the run), drawn at random in a span of n to 8 n consecutive kept frames
@@ -189,7 +189,7 @@ qsub -v RTYPE=rt_HG,CHECKPOINT=outputs/lamar_lamar_rt_HG_<date>_<time> shells/la
 
 `prepare.sh` runs `--stage recon` with one process per GPU of the node (`--workers`), then `--stage samples` with
 `NUM_WORKERS` CPU processes (default: the CPUs of the node, at most one per 8 GB of free memory; `EPOCHS` sets of
-`WINDOWS` windows, default 20 and 17728; `VAL_WINDOWS` 600). Each stage is one python process that shares the chunks or
+`WINDOWS` windows, default 20 and 8864; `VAL_WINDOWS` 600). Each stage is one python process that shares the chunks or
 windows between its workers (`multiprocessing.Pool`) and shows one progress bar of all of them in the job output
 (`PYTHONUNBUFFERED`); a failing worker stops the job with its traceback. The samples do not depend on the number of
 workers (the random generator of a window is seeded by its index). The epochs whose CSV files are written are
