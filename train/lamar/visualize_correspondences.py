@@ -5,7 +5,8 @@ prepare_lamar.py, --max_points per window). First row: the correspondences of on
 the photo (seven colours, red on the left); second row: those of the whole window, coloured by frame (red: first,
 violet: last), next to the same photo without points.
 Reads the windows of one epoch of prepare_lamar.py (--data <data>/epoch_<e>, meta/windows.csv) and the cached
-reconstructions of their sessions (--session_cache): no GPU.
+reconstructions of their sessions (--session_cache): no GPU. All the pixels of the frames are used (not the random
+pixel dropout of prepare_lamar.py).
 
     python train/lamar/visualize_correspondences.py --map_dir <HGE/sessions/map> --raw_dir <raw sessions> \
         --floorplan hge.png --session_cache <data>/session_cache --data <data>/epoch_000 --output <data>/vis_correspondences
@@ -20,7 +21,7 @@ import pandas as pd
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from lamar import load_floorplan, load_session, train_frames, world_to_plan_full  # noqa: E402
+from lamar import concat_sessions, load_floorplan, load_session, train_frames, world_to_plan_full  # noqa: E402
 from prepare_lamar import plan_correspondences, window_world, world_grid  # noqa: E402
 from reconstruction import SessionCache, window_from_cache  # noqa: E402
 from prepare_lamar import DENSITY_SIZE, MAX_WALL_DIST_M  # noqa: E402
@@ -126,20 +127,23 @@ def main():
     if windows is None:
         names = list(listed.index)
         if args.num_frames:
-            names = [n for n in names if args.num_frames[0] <= len(listed.timestamps[n].split()) <= args.num_frames[1]]
+            names = [n for n in names if args.num_frames[0] <= len(listed.frames[n].split()) <= args.num_frames[1]]
         windows = [names[i] for i in sorted(rng.choice(len(names), min(args.num_windows, len(names)), replace=False))]
     os.makedirs(args.output, exist_ok=True)
 
     sessions, caches = {}, {}
     for name in windows:
-        session_name = listed.session[name]
-        if session_name not in sessions:
-            session = load_session(args.map_dir, args.raw_dir, session_name)
-            sessions[session_name] = session.subset(train_frames(session, plan_params))
-            caches[session_name] = SessionCache(os.path.join(args.session_cache, session_name))
-        timestamps = np.array(listed.timestamps[name].split(), dtype=np.int64)
-        frames = sessions[session_name].subset(np.searchsorted(sessions[session_name].timestamps, timestamps))
-        recon = window_from_cache(caches[session_name], frames.timestamps, frames.c2w, images=True)
+        parts = {}  # session -> timestamps, in the order of the window (one run of frames per session)
+        for token in listed.frames[name].split():
+            session_name, t = token.rsplit(":", 1)
+            parts.setdefault(session_name, []).append(int(t))
+        for session_name in parts:
+            if session_name not in sessions:
+                session = load_session(args.map_dir, args.raw_dir, session_name)
+                sessions[session_name] = session.subset(train_frames(session, plan_params))
+                caches[session_name] = SessionCache(os.path.join(args.session_cache, session_name))
+        frames = concat_sessions([sessions[n].subset(np.searchsorted(sessions[n].timestamps, ts)) for n, ts in parts.items()])
+        recon = window_from_cache([(caches[n], np.array(ts)) for n, ts in parts.items()], frames.c2w, images=True)
         length = len(frames)
         world, pixels = window_world(frames, recon, args.plan_source)
         if world is None:

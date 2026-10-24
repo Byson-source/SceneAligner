@@ -27,7 +27,10 @@ METRES_PER_PIXEL = 0.055  # of hge.png, the value Z-FLoc uses for its errors (th
 GRAVITY_WORLD = np.array([0.0, 0.0, -1.0])  # the world frame of LaMAR is z-up
 SEQ_LENGTHS = (15, 20, 35, 50, 100)  # window lengths of the Z-FLoc evaluation
 TRAIN_FRAMES = (50, 500)  # frames of a training window, drawn at random (C3 reconstructs 50 to 150 random photos)
-TRAIN_MAX_STEP = 4  # intervals between the frames of a training window: random in 1..TRAIN_MAX_STEP
+TRAIN_MAX_SPREAD = 8  # a window of n frames takes them at random among n to 8 n consecutive kept frames
+MIX_PROB = 0.5  # windows with frames of other sessions near their own
+MIX_RADIUS_M = 2.0  # frames of other sessions within this horizontal distance of a frame of the window
+CHUNK_SIZE = 500  # frames reconstructed together by MapAnything (cached)
 DEPTH_SCALE = 1000.0  # LaMAR depth maps: 16-bit PNG in millimetres
 HGE_INTRINSICS = np.array([[1596.080444, 0.0, 716.836365], [0.0, 1596.080444, 939.086121], [0.0, 0.0, 1.0]])  # of the 1440 x 1920 photos (Z-FLoc)
 
@@ -463,60 +466,102 @@ def train_runs(timestamps: np.ndarray, max_gap_s: float = 5.0) -> list[tuple[int
     return [(int(a), int(b - a)) for a, b in zip(starts, ends)]
 
 
-def sample_train_windows(timestamps: np.ndarray, num_windows: int, rng: np.random.Generator,
-                         num_frames: tuple = TRAIN_FRAMES, max_step: int = TRAIN_MAX_STEP) -> list[np.ndarray]:
+def sample_window(timestamps: np.ndarray, rng: np.random.Generator, num_frames: tuple = TRAIN_FRAMES,
+                  max_spread: int = TRAIN_MAX_SPREAD) -> np.ndarray | None:
     """
-    Random training windows: a run (train_runs) drawn proportionally to its length, a number of frames drawn in
-    num_frames (at most the run), intervals drawn in 1..max_step (fewer if the run is too short), a random start.
+    Frames of one random training window of a session: a run (train_runs) drawn proportionally to its length, n
+    frames drawn in num_frames (at most the run), a span of n to max_spread * n consecutive kept frames (at most the
+    run) at a random start, and n frames drawn at random in the span.
     Args:
         timestamps (np.ndarray): integer tensor with shape [N], microseconds of the kept frames, increasing
-        num_windows (int): windows to draw
         rng (np.random.Generator): random generator
         num_frames (tuple): (min, max) frames of a window; runs shorter than min are not used
-        max_step (int): largest interval between the frames of a window
+        max_spread (int): largest span of a window, in frames per frame of the window
 
     Returns:
-        list[np.ndarray]: indices of the kept frames of every window, increasing
+        np.ndarray | None: increasing indices of the kept frames, None if no run is long enough
     """
     runs = [run for run in train_runs(timestamps) if run[1] >= num_frames[0]]
     if not runs:
-        return []
+        return None
     lengths = np.array([n for _, n in runs], dtype=np.float64)
-    windows = []
-    for r in rng.choice(len(runs), num_windows, p=lengths / lengths.sum()):
-        first, run_len = runs[r]
-        n = int(rng.integers(num_frames[0], min(num_frames[1], run_len) + 1))
-        steps = rng.integers(1, min(max_step, (run_len - 1) // max(1, n - 1)) + 1, n - 1)  # the window fits the run
-        offsets = np.concatenate([[0], np.cumsum(steps)])
-        windows.append(first + int(rng.integers(0, run_len - offsets[-1])) + offsets)
-    return windows
+    first, run_len = runs[rng.choice(len(runs), p=lengths / lengths.sum())]
+    n = int(rng.integers(num_frames[0], min(num_frames[1], run_len) + 1))
+    span = int(rng.integers(n, min(run_len, max_spread * n) + 1))
+    start = first + int(rng.integers(0, run_len - span + 1))
+    return start + np.sort(rng.choice(span, n, replace=False))
 
 
-def sample_distinct_windows(timestamps: np.ndarray, num_windows: int, rng: np.random.Generator, seen: set,
-                            num_frames: tuple = TRAIN_FRAMES, max_step: int = TRAIN_MAX_STEP) -> list[np.ndarray]:
+def mix_sessions(name: str, frames: np.ndarray, positions: dict, rng: np.random.Generator,
+                 radius_m: float = MIX_RADIUS_M) -> list[tuple[str, np.ndarray]]:
     """
-    Random training windows (sample_train_windows) whose combinations of frames are not in seen; seen is updated.
+    Replaces a quarter to a half of the frames of a window (all but its last one) with frames of one or two other
+    sessions that pass within radius_m of its cameras (the ground-truth poses of all the sessions share the world
+    frame), drawn at random.
     Args:
-        timestamps (np.ndarray): integer tensor with shape [N], microseconds of the kept frames, increasing
-        num_windows (int): windows to draw
+        name (str): session of the window
+        frames (np.ndarray): increasing indices of its kept frames, with shape [n]
+        positions (dict): {session: camera centres of its kept frames with shape [N, 3] [m]}
         rng (np.random.Generator): random generator
-        seen (set): tuples of the frame indices of the windows drawn before (of every epoch)
-        num_frames (tuple): (min, max) frames of a window
-        max_step (int): largest interval between the frames of a window
+        radius_m (float): horizontal distance to a camera of the window [m]
 
     Returns:
-        list[np.ndarray]: indices of the kept frames of every window, increasing
+        list[tuple[str, np.ndarray]]: parts (session, increasing indices of kept frames), the other sessions first
+            and the window last; only the window if no other session passes near it
     """
+    others = [o for o in positions if o != name]
+    if not others:
+        return [(name, frames)]
+    centres = positions[name][frames, :2]
+    candidates = []
+    for other in rng.choice(others, min(len(others), int(rng.integers(1, 3))), replace=False):
+        d = np.linalg.norm(positions[other][:, None, :2] - centres[None], axis=-1).min(axis=1)  # to the window
+        candidates += [(str(other), int(i)) for i in np.nonzero(d <= radius_m)[0]]
+    m = min(len(candidates), int(rng.integers(len(frames) // 4, len(frames) // 2 + 1)))
+    if m == 0:
+        return [(name, frames)]
+    picked = sorted(candidates[i] for i in rng.choice(len(candidates), m, replace=False))
+    kept = np.sort(rng.choice(len(frames) - 1, len(frames) - 1 - m, replace=False))
+    parts = [(other, np.array([i for o, i in picked if o == other])) for other in dict.fromkeys(o for o, _ in picked)]
+    return parts + [(name, np.append(frames[kept], frames[-1]))]
+
+
+def sample_epoch_windows(timestamps: dict, positions: dict, num_windows: int, rng: np.random.Generator, seen: set,
+                         num_frames: tuple = TRAIN_FRAMES, max_spread: int = TRAIN_MAX_SPREAD,
+                         mix_prob: float = MIX_PROB, radius_m: float = MIX_RADIUS_M) -> list[list]:
+    """
+    The training windows of one epoch, every one a combination of frames not in seen (of every epoch; seen is
+    updated): a session drawn proportionally to its kept frames, a window of it (sample_window), and with probability
+    mix_prob frames of other sessions near it (mix_sessions).
+    Args:
+        timestamps (dict): {session: integer tensor with shape [N], microseconds of the kept frames}
+        positions (dict): {session: camera centres of the kept frames with shape [N, 3] [m]}
+        num_windows (int): windows to draw
+        rng (np.random.Generator): random generator
+        seen (set): the windows drawn before, as tuples of (session, kept-frame index)
+        num_frames (tuple): (min, max) frames of a window
+        max_spread (int): of sample_window
+        mix_prob (float): probability of frames of other sessions
+        radius_m (float): of mix_sessions
+
+    Returns:
+        list[list]: parts [(session, increasing indices of kept frames)] of every window
+    """
+    names = list(timestamps)
+    weights = np.array([len(timestamps[n]) for n in names], dtype=np.float64)
     windows = []
-    for _ in range(100 * num_windows):  # duplicates are rare: frames, intervals and start are random
+    for _ in range(100 * num_windows):  # duplicates are rare
         if len(windows) == num_windows:
             break
-        drawn = sample_train_windows(timestamps, 1, rng, num_frames, max_step)
-        if not drawn:
-            break
-        if tuple(drawn[0]) not in seen:
-            seen.add(tuple(drawn[0]))
-            windows.append(drawn[0])
+        name = names[rng.choice(len(names), p=weights / weights.sum())]
+        frames = sample_window(timestamps[name], rng, num_frames, max_spread)
+        if frames is None:
+            continue
+        parts = mix_sessions(name, frames, positions, rng, radius_m) if rng.random() < mix_prob else [(name, frames)]
+        key = tuple((n, int(i)) for n, idx in parts for i in idx)
+        if key not in seen:
+            seen.add(key)
+            windows.append(parts)
     return windows
 
 
@@ -537,18 +582,21 @@ def session_chunks(timestamps: np.ndarray, chunk_size: int) -> list[np.ndarray]:
     return chunks
 
 
-def window_name(session: str, timestamps: np.ndarray) -> str:
+def window_name(parts: list) -> str:
     """
-    Name of a training window (files and cached reconstructions): its first timestamp, number of frames and a hash
-    of its timestamps.
+    Name of a training window (files): its session (the last part), first timestamp, number of frames and a hash of
+    the sessions and timestamps of all its frames.
     Args:
-        session (str): session name
-        timestamps (np.ndarray): integer tensor with shape [S], microseconds of the frames of the window
+        parts (list): [(session, integer tensor with shape [S_i], microseconds of its frames)]
 
     Returns:
-        str: "<session>_t<first timestamp>_n<S>_<crc32 of the timestamps>"
+        str: "<session>_t<first timestamp>_n<S>_<crc32>"
     """
-    return f"{session}_t{int(timestamps[0])}_n{len(timestamps)}_{zlib.crc32(np.asarray(timestamps, np.int64).tobytes()):08x}"
+    name, timestamps = parts[-1]
+    crc = 0
+    for session, ts in parts:
+        crc = zlib.crc32(np.asarray(ts, np.int64).tobytes(), zlib.crc32(session.encode(), crc))
+    return f"{name}_t{int(timestamps[0])}_n{sum(len(ts) for _, ts in parts)}_{crc:08x}"
 
 
 # ----------------------------------------------------------------------------------------------------------------------
@@ -732,7 +780,8 @@ def unproject(depth_z: np.ndarray, K: np.ndarray) -> np.ndarray:
     return points.astype(np.float32)
 
 
-def lidar_points(depth_paths: list, K_depth: np.ndarray, extrinsics: np.ndarray) -> np.ndarray:
+def lidar_points(depth_paths: list, K_depth: np.ndarray, extrinsics: np.ndarray, keep_fractions: np.ndarray | None = None,
+                 rng: np.random.Generator | None = None) -> np.ndarray:
     """
     LiDAR points of the frames of a window in the frame of camera 0, at the resolution of the depth maps (as the
     ground-truth depth samples of prepare_s3d.py).
@@ -740,6 +789,9 @@ def lidar_points(depth_paths: list, K_depth: np.ndarray, extrinsics: np.ndarray)
         depth_paths (list): S depth PNG paths, None for frames without depth
         K_depth (np.ndarray): tensor with shape [S, 3, 3], intrinsics of the depth maps (NaN without depth)
         extrinsics (np.ndarray): tensor with shape [S, 4, 4], camera-to-camera-0
+        keep_fractions (np.ndarray | None): tensor with shape [S], fraction of the pixels of every frame kept at
+            random (with rng); None: all
+        rng (np.random.Generator | None): random generator of keep_fractions
 
     Returns:
         np.ndarray: float32 tensor with shape [M, 3], the valid depth pixels of all the frames
@@ -749,7 +801,10 @@ def lidar_points(depth_paths: list, K_depth: np.ndarray, extrinsics: np.ndarray)
         if path is None:
             continue
         local = unproject(load_depth(path), K_depth[i]).reshape(-1, 3)
-        local = local[np.isfinite(local).all(axis=1)]
+        valid = np.isfinite(local).all(axis=1)
+        if keep_fractions is not None:
+            valid &= rng.random(len(local)) < keep_fractions[i]
+        local = local[valid]
         points.append((local @ extrinsics[i, :3, :3].T + extrinsics[i, :3, 3]).astype(np.float32))
     return np.concatenate(points)
 
@@ -800,6 +855,20 @@ class Session:
         """Frames at the given indices, in that order."""
         return Session(self.name, self.timestamps[indices], [self.image_paths[i] for i in indices],
                        [self.depth_paths[i] for i in indices], self.c2w[indices], self.K[indices], self.K_depth[indices])
+
+
+def concat_sessions(parts: list) -> Session:
+    """
+    Frames of several sessions, in order (a window mixing sessions); named after the last one.
+    Args:
+        parts (list): Session objects
+
+    Returns:
+        Session: their frames
+    """
+    return Session(parts[-1].name, np.concatenate([p.timestamps for p in parts]), sum((p.image_paths for p in parts), []),
+                   sum((p.depth_paths for p in parts), []), np.concatenate([p.c2w for p in parts]),
+                   np.concatenate([p.K for p in parts]), np.concatenate([p.K_depth for p in parts]))
 
 
 def load_session(map_dir: str | Path, raw_dir: str | Path | None, session: str) -> Session:

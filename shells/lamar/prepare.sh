@@ -10,7 +10,7 @@
 # density maps of random windows assembled from the cached points: other windows at every epoch of train.py
 # ($DATA/epoch_<e>), and one set of val windows ($DATA/val/epoch_000, validation of train.py).
 # Called by prepare_hf.sh / prepare_hg.sh with DATA and RTYPE. NUM_GPUS: MapAnything processes (default: the GPUs
-# of the node); NUM_WORKERS: CPU processes of the windows. e.g. qsub -v RTYPE=rt_HF,EPOCHS=40,WINDOWS=100 shells/lamar/prepare_hf.sh
+# of the node); NUM_WORKERS: CPU processes of the windows. e.g. qsub -v RTYPE=rt_HF,EPOCHS=40,WINDOWS=10000 shells/lamar/prepare_hf.sh
 
 source /etc/profile.d/modules.sh
 export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner
@@ -34,7 +34,8 @@ python train/lamar/lamar.py --check --map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT"
 
 SPLITS="${SPLITS:-train val}"  # train -> $DATA, val -> $DATA/val (validation of train.py); e.g. qsub -v RTYPE=rt_HG,SPLITS=val
 EPOCHS="${EPOCHS:-20}"         # sets of train windows, one per epoch of train.py ($DATA/epoch_<e>); val: one set
-WINDOWS="${WINDOWS:-50}"       # random windows per session and epoch, every one a different combination of frames
+WINDOWS="${WINDOWS:-17728}"    # random windows per epoch (x 2 samples = 1108 steps of 32), all different combinations of frames
+VAL_WINDOWS="${VAL_WINDOWS:-600}"  # val windows (one set)
 CACHE="${CACHE:-$DATA/session_cache}"  # MapAnything on chunks of the sessions, shared by train and val
 NUM_GPUS="${NUM_GPUS:-$(nvidia-smi -L | wc -l)}"
 MEM_WORKERS=$(( $(awk '/MemAvailable/ {print int($2 / 1048576)}' /proc/meminfo) / 8 ))  # up to 8 GB per window
@@ -47,10 +48,11 @@ common=(--map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" --floorplan "$FLOORPLAN" --
 python train/lamar/prepare_lamar.py --stage recon "${common[@]}" --sessions $SPLITS --workers "$NUM_GPUS"
 # 2. The windows of every epoch from the cached points (CPU processes, one progress bar of all the windows). The
 #    finished epochs are skipped on a rerun:
-#    delete $DATA/epoch_* and $DATA/val/epoch_* after changing EPOCHS or WINDOWS
+#    delete $DATA/epoch_* and $DATA/val/epoch_* after changing EPOCHS, WINDOWS or VAL_WINDOWS
 for split in $SPLITS; do
     output="$DATA$([[ $split == train ]] || echo "/$split")"
     epochs=$([[ $split == train ]] && echo "$EPOCHS" || echo 1)
+    windows=$([[ $split == train ]] && echo "$WINDOWS" || echo "$VAL_WINDOWS")
     python train/lamar/prepare_lamar.py --stage samples "${common[@]}" --sessions "$split" --workers "$NUM_WORKERS" \
-        --output "$output" --epochs "$epochs" --windows_per_session "$WINDOWS"
+        --output "$output" --epochs "$epochs" --windows_per_epoch "$windows"
 done

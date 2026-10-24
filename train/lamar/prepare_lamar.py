@@ -12,9 +12,11 @@ sample of its LiDAR depth maps, as prepare_s3d.py makes one of the ground-truth 
 The kept frames of a session are reconstructed once, in chunks of at most --chunk_size consecutive frames; the
 points of every frame are cached in its camera frame, and a window takes those of its frames, placed with the
 ground-truth poses relative to its first frame (reconstruction.window_from_cache).
-Windows (--windows_per_session per session and epoch, --epochs sets in <data>/epoch_<e>, every one a different
-combination of frames): 50 to 500 frames from a random start, every 1 to 4 frames (random intervals), inside a run
-of kept frames (C3 reconstructs 50 to 150 random photos of a scene).
+Windows (--windows_per_epoch per epoch, --epochs sets in <data>/epoch_<e>, every one a different combination of
+frames; lamar.sample_epoch_windows): a session drawn proportionally to its kept frames, 50 to 500 frames drawn at
+random among n to 8 n consecutive kept frames of a run (C3 reconstructs 50 to 150 random photos of a scene); in
+half of the windows, a quarter to a half of the frames replaced with frames of one or two other sessions within 2 m
+of its cameras. Every frame keeps a random fraction in [--min_keep 0.25, 1] of its pixels and LiDAR points.
 Correspondences, as prepare_s3d.py: the pixels of the density map of the 3D points whose positions lie on walls of
 the floorplan (within --max_wall_dist 0.2 m of a wall pixel of hge.png), and the floorplan pixels of these positions. With --plan_source recon (default) the positions are those
 of the reconstructed points placed with the ground-truth pose of the first camera; with --plan_source lidar,
@@ -35,8 +37,9 @@ import pandas as pd
 from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from lamar import (TRAIN_FRAMES, TRAIN_MAX_STEP, Session, filter_ground_points, ground_rotation, lidar_points, lidar_points_cam0,  # noqa: E402
-                   load_floorplan, load_session, load_split, on_plan, sample_distinct_windows, session_chunks,
+from lamar import (CHUNK_SIZE, MIX_PROB, MIX_RADIUS_M, TRAIN_FRAMES, TRAIN_MAX_SPREAD, Session, concat_sessions,  # noqa: E402
+                   filter_ground_points, ground_rotation, lidar_points, lidar_points_cam0, load_floorplan, load_session,
+                   load_split, on_plan, sample_epoch_windows, session_chunks,
                    top_down_projection, train_frames, window_name, world_to_plan)
 from reconstruction import SessionCache, load_mapanything, reconstruct, save_chunk, window_from_cache  # noqa: E402
 from scenealigner.evaluation import get_camera_center_on_density_px, process_gt_correspondences  # noqa: E402
@@ -159,8 +162,30 @@ def plan_correspondences(world: np.ndarray, pixels: np.ndarray, shape: tuple, pl
     return corrs
 
 
+def projection_geometry(recon: dict, conf: float, xz: float, keep: np.ndarray | None) -> tuple:
+    """
+    scenealigner.inference.reconstruct_projection_geometry of the kept pixels only (their percentiles).
+    Args:
+        recon (dict): of reconstruction.reconstruct
+        conf (float): confidence threshold (percentile)
+        xz (float): x/z slice
+        keep (np.ndarray | None): boolean tensor with shape [S, H, W], the pixels kept; None: all
+
+    Returns:
+        tuple: projection parameters, the points of the density map [N, 3] (ground frame) and their mask [S, H, W]
+    """
+    if keep is None:
+        return reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"], conf, xz,
+                                               density_size=DENSITY_SIZE)
+    proj_params, points, kept_mask = reconstruct_projection_geometry(recon["points_cam0"][keep], recon["conf"][keep],
+                                                                     recon["est_gravity_cam"], conf, xz, density_size=DENSITY_SIZE)
+    mask = np.zeros(keep.shape, dtype=bool)
+    mask[keep] = kept_mask
+    return proj_params, points, mask
+
+
 def mapanything_sample(recon: dict, corrs: list, conf_thresholds: list, plan_params: dict, output: str, name: str,
-                       rng: np.random.Generator) -> list:
+                       rng: np.random.Generator, keep: np.ndarray | None = None) -> list:
     """
     Saves one density map of a reconstruction with its correspondences, as prepare_c3.generate makes each of its
     samples, for a random confidence threshold, x/z slice and gamma: the (threshold, slice) pairs are tried in random
@@ -173,6 +198,7 @@ def mapanything_sample(recon: dict, corrs: list, conf_thresholds: list, plan_par
         output (str): data directory
         name (str): file stem of the window, relative to output
         rng (np.random.Generator): random generator
+        keep (np.ndarray | None): boolean tensor with shape [S, H, W], the pixels kept (dropped at random); None: all
 
     Returns:
         list: [] or [row {"density", "correspondences", "camera_density"}]
@@ -180,8 +206,7 @@ def mapanything_sample(recon: dict, corrs: list, conf_thresholds: list, plan_par
     pairs_conf_xz = [(conf, xz) for conf in conf_thresholds for xz in XZ_SLICES]
     for i in rng.permutation(len(pairs_conf_xz)):
         conf, xz = pairs_conf_xz[i]
-        proj_params, points, mask = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"],
-                                                                    conf, xz, density_size=DENSITY_SIZE)
+        proj_params, points, mask = projection_geometry(recon, conf, xz, keep)
         pairs = [process_gt_correspondences(corr, s, recon["points_cam0"], proj_params, mask)
                  for s, corr in enumerate(corrs) if corr is not None]
         pairs = [pair for pair in pairs if len(pair[0]) >= MIN_VIEW_CORRESPONDENCES]
@@ -323,7 +348,8 @@ def reconstruct_sessions(sessions: dict, args) -> None:
 
 def window_rows(index: int) -> tuple[int, dict]:
     """
-    Saves the samples of one window of the jobs of sample_windows (in WORKER) and returns their CSV rows.
+    Saves the samples of one window of the jobs of sample_windows (in WORKER) and returns their CSV rows. The pixels
+    of every frame (and its LiDAR points) are kept with a random fraction in [--min_keep, 1].
     Args:
         index (int): of the window in the jobs (its random generator: the samples do not depend on the workers)
 
@@ -331,40 +357,46 @@ def window_rows(index: int) -> tuple[int, dict]:
         tuple[int, dict]: index and {source: rows, "windows": [row of the frames of the window]} (empty without points)
     """
     args, sessions, plan_params, caches = WORKER["args"], WORKER["sessions"], WORKER["plan_params"], WORKER["caches"]
-    epoch, session_name, window = WORKER["jobs"][index]
+    epoch, parts = WORKER["jobs"][index]
     rows = {kind: [] for kind in (*SOURCES, "windows")}
     output = epoch_dir(args.output, epoch)
-    frames = sessions[session_name].subset(window)
-    name = window_name(session_name, frames.timestamps)
-    if session_name not in caches:  # memory-mapped, one per worker
-        caches[session_name] = SessionCache(os.path.join(args.session_cache, session_name))
-    recon = window_from_cache(caches[session_name], frames.timestamps, frames.c2w)
+    frames = concat_sessions([sessions[session].subset(idx) for session, idx in parts])
+    part_timestamps = [(session, sessions[session].timestamps[idx]) for session, idx in parts]
+    name = window_name(part_timestamps)
+    for session, _ in parts:
+        if session not in caches:  # memory-mapped, one per worker
+            caches[session] = SessionCache(os.path.join(args.session_cache, session))
+    recon = window_from_cache([(caches[session], ts) for session, ts in part_timestamps], frames.c2w)
+    rng = np.random.default_rng([args.seed, index])  # dropped pixels, correspondences and density map
+    fractions = rng.uniform(args.min_keep, 1.0, len(frames))
+    keep = rng.random(recon["mask"].shape) < fractions[:, None, None]
     world, pixels = window_world(frames, recon, args.plan_source)
     if world is None:
         return index, rows
+    kept = keep.reshape(-1)[pixels]
     max_wall_dist = None if args.max_wall_dist < 0 else args.max_wall_dist
-    rng = np.random.default_rng([args.seed, index])  # correspondences and density map
-    corrs = plan_correspondences(world, pixels, recon["mask"].shape, plan_params, args.max_points, rng, max_wall_dist)
-    samples = mapanything_sample(recon, corrs, args.conf, plan_params, output, os.path.join("mapanything", name), rng)
-    if not args.no_lidar_samples and any(p is not None for p in frames.depth_paths):
-        samples += lidar_samples(lidar_points(frames.depth_paths, frames.K_depth, recon["extrinsics"]), recon,
-                                 plan_params, frames.c2w[0], output, os.path.join("lidar", name), args.max_points, rng,
+    corrs = plan_correspondences(world[kept], pixels[kept], recon["mask"].shape, plan_params, args.max_points, rng,
                                  max_wall_dist)
+    samples = mapanything_sample(recon, corrs, args.conf, plan_params, output, os.path.join("mapanything", name), rng, keep)
+    if not args.no_lidar_samples and any(p is not None for p in frames.depth_paths):
+        lidar = lidar_points(frames.depth_paths, frames.K_depth, recon["extrinsics"], fractions, rng)
+        samples += lidar_samples(lidar, recon, plan_params, frames.c2w[0], output, os.path.join("lidar", name),
+                                 args.max_points, rng, max_wall_dist)
     camera_plan = world_to_plan(frames.c2w[-1, :3, 3], plan_params)
     for sample in samples:
         sample.update({"scene_id": scene_id_of(frames, args.scene_id, args.cell_m), "floorplan": PLAN_PATH,
                        "rgb": os.path.abspath(frames.image_paths[-1]), "camera_plan": "{:.2f} {:.2f}".format(*camera_plan),
                        "camera_density": "{:.2f} {:.2f}".format(*sample["camera_density"])})
         rows[sample["density"].split(os.sep)[0]].append(sample)
-    rows["windows"].append({"name": name, "session": session_name,
-                            "timestamps": " ".join(str(int(t)) for t in frames.timestamps)})
+    rows["windows"].append({"name": name, "frames": " ".join(f"{session}:{int(t)}" for session, ts in part_timestamps for t in ts),
+                            "keep": " ".join(f"{f:.3f}" for f in fractions)})
     return index, rows
 
 
 def sample_windows(sessions: dict, args, plan_img, plan_params: dict) -> None:
     """
-    The samples of --epochs sets of --windows_per_session random windows per session, every window a different
-    combination of frames (over all epochs), assembled from the cached chunks: one density map of the reconstruction
+    The samples of --epochs sets of --windows_per_epoch random windows (lamar.sample_epoch_windows), every window a
+    different combination of frames (over all epochs), assembled from the cached chunks: one density map of the reconstruction
     (mapanything_sample) and one of the LiDAR points (lidar_samples). Epoch e goes to <output>/epoch_<e>; the windows
     are shared by --workers processes (one progress bar), and the CSV files of an epoch are written once all its
     windows are done (meta/windows.csv last: the epoch is skipped on a rerun).
@@ -375,10 +407,12 @@ def sample_windows(sessions: dict, args, plan_img, plan_params: dict) -> None:
         plan_params (dict): of lamar.load_floorplan
     """
     rng = np.random.default_rng(args.seed)
-    seen = {name: set() for name in sessions}
-    jobs = [(epoch, name, window) for epoch in range(args.epochs) for name, session in sessions.items()
-            for window in sample_distinct_windows(session.timestamps, args.windows_per_session, rng, seen[name],
-                                                  tuple(args.num_frames), args.max_step)]
+    seen = set()
+    timestamps = {name: session.timestamps for name, session in sessions.items()}
+    positions = {name: session.c2w[:, :3, 3] for name, session in sessions.items()}
+    jobs = [(epoch, parts) for epoch in range(args.epochs)
+            for parts in sample_epoch_windows(timestamps, positions, args.windows_per_epoch, rng, seen, tuple(args.num_frames),
+                                              args.max_spread, args.mix_prob, args.mix_radius)]
     done = {e for e in range(args.epochs) if os.path.exists(os.path.join(epoch_dir(args.output, e), "meta", "windows.csv"))}
     todo = [i for i, job in enumerate(jobs) if job[0] not in done]
     for epoch in set(range(args.epochs)) - done:
@@ -406,7 +440,7 @@ def sample_windows(sessions: dict, args, plan_img, plan_params: dict) -> None:
                 for source in SOURCES:
                     pd.DataFrame([r for w in ordered for r in w[source]], columns=CSV_COLUMNS).to_csv(
                         os.path.join(folder, f"lamar_{source}.csv"), index=False)
-                pd.DataFrame([r for w in ordered for r in w["windows"]], columns=["name", "session", "timestamps"]).to_csv(
+                pd.DataFrame([r for w in ordered for r in w["windows"]], columns=["name", "frames", "keep"]).to_csv(
                     os.path.join(folder, "meta", "windows.csv"), index=False)
                 tqdm.write(f"epoch {epoch}: " + ", ".join(f"{k} {sum(len(w[k]) for w in ordered)}" for k in (*SOURCES, "windows")))
                 del rows[epoch]
@@ -425,12 +459,17 @@ def main():
     parser.add_argument("--split", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "split.yaml"))
     parser.add_argument("--sessions", nargs="+", default=["train"], help="splits (train, val, test) or session names")
     parser.add_argument("--plan_size", type=int, default=1024, help="resolution of the floorplan")
-    parser.add_argument("--chunk_size", type=int, default=TRAIN_FRAMES[1], help="most frames reconstructed together "
+    parser.add_argument("--chunk_size", type=int, default=CHUNK_SIZE, help="most frames reconstructed together "
                         "(delete --session_cache after changing it)")
     parser.add_argument("--epochs", type=int, default=20, help="sets of windows, one per training epoch")
-    parser.add_argument("--windows_per_session", type=int, default=50, help="random windows per session and epoch")
+    parser.add_argument("--windows_per_epoch", type=int, default=17728, help="random windows per epoch (two samples "
+                        "each: 35456, 1108 steps of 32 as the 600 windows x 60 density maps before)")
     parser.add_argument("--num_frames", type=int, nargs=2, default=list(TRAIN_FRAMES), help="min and max frames of a window")
-    parser.add_argument("--max_step", type=int, default=TRAIN_MAX_STEP, help="largest interval between the frames of a window")
+    parser.add_argument("--max_spread", type=int, default=TRAIN_MAX_SPREAD,
+                        help="the n frames of a window are drawn among n to max_spread * n consecutive frames")
+    parser.add_argument("--mix_prob", type=float, default=MIX_PROB, help="probability of frames of other sessions in a window")
+    parser.add_argument("--mix_radius", type=float, default=MIX_RADIUS_M, help="other sessions: frames within this distance [m]")
+    parser.add_argument("--min_keep", type=float, default=0.25, help="pixels kept per frame: a random fraction in [min_keep, 1]")
     parser.add_argument("--conf", type=int, nargs="+", default=list(CONF_THRESHOLDS), help="confidence thresholds (percentiles)")
     parser.add_argument("--plan_source", default="recon", choices=["recon", "lidar"], help="3D points of the correspondences")
     parser.add_argument("--no_lidar_samples", action="store_true", help="no density maps of the LiDAR points")

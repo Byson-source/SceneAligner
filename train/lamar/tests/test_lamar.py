@@ -66,21 +66,31 @@ def test_indoor_and_windows():
     gapped = np.concatenate([np.arange(60) * 500_000, 100_000_000 + np.arange(30) * 500_000])
     assert lamar.train_runs(gapped) == [(0, 60), (60, 30)]
     rng = np.random.default_rng(0)
-    windows = lamar.sample_train_windows(gapped, 20, rng, num_frames=(10, 40), max_step=4)
-    assert len(windows) == 20
-    for w in windows:
-        steps = np.diff(w)
-        assert 10 <= len(w) <= 40 and steps.min() >= 1 and steps.max() <= 4
+    for _ in range(50):
+        w = lamar.sample_window(gapped, rng, num_frames=(10, 40), max_spread=8)
+        assert 10 <= len(w) <= 40 and np.all(np.diff(w) >= 1)
         assert (w[-1] < 60) or (w[0] >= 60)  # inside one run
-    assert not lamar.sample_train_windows(gapped, 5, rng, num_frames=(70, 100))  # no run is long enough
+        assert w[-1] - w[0] < 8 * len(w)  # span
+    assert lamar.sample_window(gapped, rng, num_frames=(70, 100)) is None  # no run is long enough
+    positions = {"a": np.stack([np.arange(90) * 0.5, np.zeros(90), np.zeros(90)], 1),
+                 "b": np.stack([np.arange(90) * 0.5, np.ones(90), np.zeros(90)], 1),  # 1 m beside a
+                 "c": np.full((90, 3), 100.0)}  # far
+    for _ in range(20):
+        parts = lamar.mix_sessions("a", np.arange(10, 30), positions, rng, radius_m=2.0)
+        assert parts[-1][0] == "a" and parts[-1][1][-1] == 29 and all(n != "c" for n, _ in parts)
+        assert sum(len(i) for _, i in parts) == 20
     seen = set()
-    distinct = [w for _ in range(3) for w in lamar.sample_distinct_windows(gapped, 20, rng, seen, num_frames=(10, 40))]
-    assert len(distinct) == 60 and len({tuple(w) for w in distinct}) == 60  # different combinations over the epochs
+    timestamps = {n: gapped for n in positions}
+    epochs = [lamar.sample_epoch_windows(timestamps, positions, 20, rng, seen, num_frames=(10, 40)) for _ in range(3)]
+    keys = {tuple((n, int(i)) for n, idx in w for i in idx) for e in epochs for w in e}
+    assert sum(len(e) for e in epochs) == 60 and len(keys) == 60  # different combinations over the epochs
+    assert any(len(w) > 1 for e in epochs for w in e)  # some windows mix sessions
+    name = lamar.window_name([("ios_x_000", np.array([123, 456]))])
+    assert name.startswith("ios_x_000_t123_n2_") and name != lamar.window_name([("ios_x_000", np.array([123, 457]))])
+    assert lamar.window_name([("a", np.array([1])), ("b", np.array([2]))]) != lamar.window_name([("b", np.array([1])), ("b", np.array([2]))])
     chunks = lamar.session_chunks(gapped, 25)
     assert [len(c) for c in chunks] == [20, 20, 20, 15, 15]  # runs of 60 and 30 frames
     assert np.array_equal(np.concatenate(chunks), np.arange(90))
-    name = lamar.window_name("ios_x_000", np.array([123, 456]))
-    assert name.startswith("ios_x_000_t123_n2_") and name != lamar.window_name("ios_x_000", np.array([123, 457]))
     assert lamar.iter_test_windows(23, 10) == [slice(0, 10), slice(10, 20)]
 
 
@@ -204,7 +214,7 @@ def test_window_from_cached_chunks(tmp_path):
         reconstruction.save_chunk(str(tmp_path / f"t{timestamps[chunk][0]}_n2"), recon, timestamps[chunk])
     cache = reconstruction.SessionCache(str(tmp_path))
     window = [1, 2, 3]  # across the chunks
-    recon = reconstruction.window_from_cache(cache, timestamps[window], c2w[window])
+    recon = reconstruction.window_from_cache([(cache, timestamps[window])], c2w[window])
     ext = np.linalg.inv(c2w[1]) @ c2w[window]  # camera-to-camera-0 of the window
     expected = local[window] @ ext[:, None, :3, :3].transpose(0, 1, 3, 2) + ext[:, None, None, :3, 3]
     assert np.array_equal(recon["mask"], mask[window])

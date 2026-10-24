@@ -184,33 +184,36 @@ class SessionCache:
         return out
 
 
-def window_from_cache(cache: SessionCache, timestamps: np.ndarray, c2w: np.ndarray, images: bool = False) -> dict:
+def window_from_cache(parts: list, c2w: np.ndarray, images: bool = False) -> dict:
     """
-    Reconstruction of a window assembled from the cached chunks of its session, as reconstruct returns it: the points
-    of every frame placed with its ground-truth pose relative to the first frame of the window.
+    Reconstruction of a window assembled from the cached chunks of its sessions, as reconstruct returns it: the
+    points of every frame placed with its ground-truth pose relative to the first frame of the window (the world frame
+    is shared by the sessions).
     Args:
-        cache (SessionCache): of the session
-        timestamps (np.ndarray): integer tensor with shape [S], microseconds of the frames of the window
-        c2w (np.ndarray): tensor with shape [S, 4, 4], camera-to-world poses [m]
+        parts (list): [(SessionCache, integer tensor with shape [S_i], microseconds of its frames)], in order
+        c2w (np.ndarray): tensor with shape [S, 4, 4], camera-to-world poses of all the frames [m]
         images (bool): also "preprocessed_images" (only for visualizations: the samples do not read them)
 
     Returns:
         dict: the keys of reconstruct ("preprocessed_images" only with images) and "timestamps"
     """
+    def take(key: str) -> np.ndarray:
+        return np.concatenate([cache.take(key, ts) for cache, ts in parts])
+
     extrinsics = relative_extrinsics(c2w)
     R, t = extrinsics[:, None, :3, :3].astype(np.float32), extrinsics[:, None, None, :3, 3].astype(np.float32)
-    mask = cache.take("mask", timestamps)
-    points = cache.take("points_cam", timestamps).astype(np.float32) @ R.transpose(0, 1, 3, 2)
+    mask = take("mask")
+    points = take("points_cam").astype(np.float32) @ R.transpose(0, 1, 3, 2)
     points += t
     points[~mask] = 0.0
     S, H, W = mask.shape
-    recon = {"points_cam0": points, "conf": cache.take("conf", timestamps), "mask": mask,
+    recon = {"points_cam0": points, "conf": take("conf"), "mask": mask,
              "extrinsics": extrinsics.astype(np.float64), "est_gravity_cam": gravity_cam0(c2w[0]),
-             "image_sizes": np.tile(np.array([[W, H]]), (S, 1)), "intrinsics": cache.take("intrinsics", timestamps),
-             "pose_error_deg": cache.take("pose_error_deg", timestamps),
-             "pose_error_m": cache.take("pose_error_m", timestamps), "timestamps": np.asarray(timestamps)}
+             "image_sizes": np.tile(np.array([[W, H]]), (S, 1)), "intrinsics": take("intrinsics"),
+             "pose_error_deg": take("pose_error_deg"), "pose_error_m": take("pose_error_m"),
+             "timestamps": np.concatenate([ts for _, ts in parts])}
     if images:
-        recon["preprocessed_images"] = cache.take("preprocessed_images", timestamps)
+        recon["preprocessed_images"] = take("preprocessed_images")
     return recon
 
 

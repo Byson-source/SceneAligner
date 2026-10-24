@@ -10,7 +10,7 @@ removed from this fork) where correspondences come from ground-truth geometry in
 
 | | C3 (`prepare_c3.py`) | Structured3D (`prepare_s3d.py`) | LaMAR HGE (`prepare_lamar.py`) |
 |---|---|---|---|
-| reconstruction | pi3 / VGGT, 50 to 150 photos, or one | pi3, one view | MapAnything with ground-truth intrinsics and relative poses on chunks of up to 500 consecutive frames of a session (cached); per epoch, 50 random windows per session assembled from the cached points: 50 to 500 frames, random start and intervals (1 to 4 frames), every window a different combination of frames |
+| reconstruction | pi3 / VGGT, 50 to 150 photos, or one | pi3, one view | MapAnything with ground-truth intrinsics and relative poses on chunks of up to 500 consecutive frames of a session (cached); per epoch, 17728 random windows assembled from the cached points: 50 to 500 frames drawn among n to 8 n consecutive frames, in half of them a quarter to a half from other sessions within 2 m, a random 25 to 100 % of the pixels of every frame, every window a different combination of frames |
 | gravity | GeoCalib | GeoCalib | ground-truth pose (z-up world) |
 | reconstruction samples | conf 30/45/60/75/90 x x/z 0/2.5/5 x gamma 0.25/0.5/0.75/1 | conf 45, x/z 2.5, gamma 0.5 | one of those of C3 per window, at random |
 | ground-truth geometry samples | - | density map of the ground-truth depth | density map of the LiDAR depth maps |
@@ -93,13 +93,23 @@ caches them in `<data>/session_cache/<session>/t<first timestamp>_n<frames>/` (`
 points of every frame in its own camera frame (float16, memory-mapped), its confidence, mask, image and intrinsics.
 Delete the cache after changing `--chunk_size` (`lidar_cam.npy` of an older version is not used).
 
-`--stage samples` draws, for each of `--epochs` epochs and every train session, `--windows_per_session 50` random
-windows (`lamar.sample_distinct_windows`): a run of kept frames drawn proportionally to its length; 50 to 500 frames
-(`--num_frames`, at most the run); intervals drawn in 1 to 4 frames (`--max_step`; consecutive frames are about
-0.5 m apart); a random start; every window a combination of frames not drawn before, in any epoch. A window takes the
-cached points of its frames, placed with the ground-truth poses relative to its first frame
-(`reconstruction.window_from_cache`), so a window can span chunks. The windows of epoch e go to `<data>/epoch_<e>`
-(`meta/windows.csv` lists their frames); the test windows stay those of Z-FLoc (15 to 100 consecutive frames). Each
+`--stage samples` draws, for each of `--epochs` epochs, `--windows_per_epoch 17728` random windows
+(`lamar.sample_epoch_windows`; with a LiDAR sample each, 35456 samples, the 1108 steps of 32 of an epoch of the 600
+windows x 60 density maps before):
+- a session drawn proportionally to its kept frames, a run of kept frames drawn proportionally to its length, n = 50
+  to 500 frames (`--num_frames`, at most the run), drawn at random in a span of n to 8 n consecutive kept frames
+  (`--max_spread`; consecutive frames are about 0.5 m apart) at a random start (`lamar.sample_window`);
+- in half of the windows (`--mix_prob 0.5`), a quarter to a half of the frames (all but the last) replaced with frames
+  of one or two other sessions of the split whose cameras are within 2 m (`--mix_radius`) of a camera of the window
+  (`lamar.mix_sessions`; the ground-truth poses of all the sessions share the world frame);
+- every frame keeps a random fraction in [0.25, 1] (`--min_keep`) of its pixels and of its LiDAR points; the
+  percentiles of the density map are those of the kept points;
+- every window a combination of frames not drawn before, in any epoch.
+
+A window takes the cached points of its frames, placed with the ground-truth poses relative to its first frame
+(`reconstruction.window_from_cache`), so a window can span chunks and sessions. The windows of epoch e go to
+`<data>/epoch_<e>` (`meta/windows.csv` lists their frames as `<session>:<timestamp>` and the kept fractions); the test
+windows stay those of Z-FLoc (15 to 100 consecutive frames). The val set has 600 windows (`VAL_WINDOWS`). Each
 window gives:
 - `mapanything/`: one density map of the reconstruction, for a random confidence threshold, x/z slice and gamma of
   `prepare_c3.py` (the threshold and slice pairs are tried in random order until one keeps the correspondences of
@@ -179,11 +189,11 @@ qsub -v RTYPE=rt_HG,CHECKPOINT=outputs/lamar_lamar_rt_HG_<date>_<time> shells/la
 
 `prepare.sh` runs `--stage recon` with one process per GPU of the node (`--workers`), then `--stage samples` with
 `NUM_WORKERS` CPU processes (default: the CPUs of the node, at most one per 8 GB of free memory; `EPOCHS` sets of
-`WINDOWS` windows per session, default 20 and 50). Each stage is one python process that shares the chunks or
+`WINDOWS` windows, default 20 and 17728; `VAL_WINDOWS` 600). Each stage is one python process that shares the chunks or
 windows between its workers (`multiprocessing.Pool`) and shows one progress bar of all of them in the job output
 (`PYTHONUNBUFFERED`); a failing worker stops the job with its traceback. The samples do not depend on the number of
 workers (the random generator of a window is seeded by its index). The epochs whose CSV files are written are
-skipped on a rerun: delete `$DATA/epoch_*` and `$DATA/val/epoch_*` after changing `EPOCHS` or `WINDOWS`.
+skipped on a rerun: delete `$DATA/epoch_*` and `$DATA/val/epoch_*` after changing `EPOCHS`, `WINDOWS` or `VAL_WINDOWS`.
 The data go to `DATA`, by default `/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar`. `evaluate.sh` runs one
 process per GPU (`--shard i --num_shards n`, round robin; logs in `$OUT/<val|test>_results.shard<i>.log`) and
 merges their outputs (`--merge`; the seeds of the alignment depend on the window, not on the shard): `_hf` uses all the GPUs of
@@ -197,7 +207,7 @@ of the feature matching loss (all_gather), and the logs are the mean over the GP
 `train.py --val_data`, which computes the losses, `acc` and `chance` on them after every epoch (the same
 augmentations at every epoch, seeded by `--seed`) and logs them to wandb (`val/...`) and `<run>/val_log.csv`.
 
-`REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `WINDOWS`, `NUM_GPUS`, `NUM_WORKERS`, `CACHE`, `SPLITS`, `VAL_DATA`, `RESUME`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
+`REPO`, `LAMAR_ROOT`, `DATA`, `RUN`, `EPOCHS`, `WINDOWS`, `VAL_WINDOWS`, `NUM_GPUS`, `NUM_WORKERS`, `CACHE`, `SPLITS`, `VAL_DATA`, `RESUME`, `NEGATIVES`, `PLAN_GRID`, `PLAN_SIZE`, `CHECKPOINT`, `ZFLOC_NPZ` and `WANDB_PROJECT` are passed with
 `qsub -v`, e.g. `qsub -v RTYPE=rt_HF,DATA=<data>,EPOCHS=4 shells/train/lamar_hf.sh`; `qsub -v` replaces the `#PBS -v RTYPE=...` of the script, so `RTYPE` (`rt_HF` for `_hf`, `rt_HG` for `_hg`) is always given with it (RESERVE service). The cached reconstructions of an
 older version (`<session>_s<start>_L<length>.npz`, indexed by the frames of other filters), the per-window cache
 `$DATA/recon_cache` and the samples directly in `$DATA` (`mapanything/`, `lidar/`, `lamar_*.csv`) of the previous
