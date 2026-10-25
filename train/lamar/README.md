@@ -193,7 +193,7 @@ qsub -v RTYPE=rt_HG,CHECKPOINT=outputs/lamar_lamar_rt_HG_<date>_<time> shells/la
 windows between its workers (`multiprocessing.Pool`) and shows one progress bar of all of them in the job output
 (`PYTHONUNBUFFERED`); a failing worker stops the job with its traceback. The samples do not depend on the number of
 workers (the random generator of a window is seeded by its index). The epochs whose CSV files are written are
-skipped on a rerun: delete `$DATA/epoch_*` and `$DATA/val/epoch_*` after changing `EPOCHS`, `WINDOWS` or `VAL_WINDOWS`.
+skipped on a rerun: delete `$DATA/epoch_*` and `$DATA/<split>/epoch_*` after changing `EPOCHS`, `WINDOWS` or `VAL_WINDOWS`.
 The data go to `DATA`, by default `/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar`. `evaluate.sh` runs one
 process per GPU (`--shard i --num_shards n`, round robin; logs in `$OUT/<val|test>_results.shard<i>.log`) and
 merges their outputs (`--merge`; the seeds of the alignment depend on the window, not on the shard): `_hf` uses all the GPUs of
@@ -201,8 +201,10 @@ a node, `_hg` one. `train.sh` runs `train.py` with `torchrun` on all the GPUs of
 a batch of 4 windows per GPU: 32 on rt_HF, lr unchanged); the points of the batches of all GPUs are the candidates
 of the feature matching loss (all_gather), and the logs are the mean over the GPUs.
 
-`prepare.sh` also makes one set of windows of the val session in `$DATA/val/epoch_000` (`SPLITS`, default
-`train val`; only the val windows: `qsub -v RTYPE=rt_HF,SPLITS=val shells/lamar/prepare_hf.sh`). `train.py` takes the windows of
+`prepare.sh` also makes one set of validation windows: for now of the test sessions (their Z-FLoc frames,
+`lamar.test_frames`), in `$DATA/test/epoch_000` (`SPLITS`, default `train test`; only these windows:
+`qsub -v RTYPE=rt_HF,SPLITS=test shells/lamar/prepare_hf.sh`; the UnLoc val session: `SPLITS="train val"` and
+`VAL_DATA=$DATA/val`). `train.py` takes the windows of
 `<data>/epoch_<e>` at epoch e (in turn if there are fewer sets than epochs). When they exist, `train.sh` passes them to
 `train.py --val_data`, which computes the losses, `acc` and `chance` on them after every epoch (the same
 augmentations at every epoch, seeded by `--seed`) and logs them to wandb (`val/...`) and `<run>/val_log.csv`.
