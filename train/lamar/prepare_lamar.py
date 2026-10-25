@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lamar import (CHUNK_SIZE, MIX_PROB, MIX_RADIUS_M, TRAIN_FRAMES, TRAIN_MAX_SPREAD, Session, concat_sessions,  # noqa: E402
                    filter_ground_points, ground_rotation, lidar_points, lidar_points_cam0, load_floorplan, load_session,
                    load_split, on_plan, sample_epoch_windows, session_chunks,
-                   test_frames, top_down_projection, train_frames, window_name, world_to_plan)
+                   top_down_projection, train_frames, window_name, world_to_plan)
 from reconstruction import SessionCache, load_mapanything, reconstruct, save_chunk, window_from_cache  # noqa: E402
 from scenealigner.evaluation import get_camera_center_on_density_px, process_gt_correspondences  # noqa: E402
 from scenealigner.inference import get_density_coordinates  # noqa: E402
@@ -519,8 +519,7 @@ def main():
     sessions = {}
     for session_name in [name for key in args.sessions for name in (split[key] if key in split else [key])]:
         session = load_session(args.map_dir, args.raw_dir, session_name)
-        kept = test_frames(session, plan_params) if session_name in split["test"] else train_frames(session, plan_params)
-        sessions[session_name] = session.subset(kept)
+        sessions[session_name] = session.subset(train_frames(session, plan_params))  # every split, as UnLoc
     if args.stage == "recon":
         reconstruct_sessions(sessions, args)
     else:
