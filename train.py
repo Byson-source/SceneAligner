@@ -225,8 +225,12 @@ def main():
     if args.wandb_project and rank == 0:
         import wandb  # optional dependency
 
-        wandb.init(project=args.wandb_project, name=args.wandb_name, config=vars(args), id=state.get("wandb_id"),
-                   resume="allow")
+        init = dict(project=args.wandb_project, name=args.wandb_name, config=vars(args), id=state.get("wandb_id"), resume="allow")
+        try:
+            wandb.init(**init)
+        except wandb.errors.CommError as error:  # the compute node can not reach the server: log locally, wandb sync later
+            print(f"wandb: {error}\nwandb: offline run in {os.path.abspath('wandb')} (upload: wandb sync <run folder>)")
+            wandb.init(**init, mode="offline")
 
     random.seed(args.seed + rank)  # different augmentations and dropout on each GPU
     np.random.seed(args.seed + rank)
