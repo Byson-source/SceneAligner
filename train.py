@@ -14,6 +14,9 @@ With torchrun (shells/train/train.sh), one process per GPU of the node (Distribu
 batch of 4 samples, and the points of the batches of all GPUs are the candidates of the feature matching loss.
 
     torchrun --standalone --nproc_per_node=8 train.py --data <data> --output <run> ...
+
+With --init, the LoRA layers start from a trained checkpoint (e.g. jhcho99/SceneAligner) instead of zero, to
+fine-tune it (with a lower --lr and fewer --epochs).
 """
 import argparse
 import csv
@@ -32,7 +35,7 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader, DistributedSampler
 from tqdm import tqdm
 
-from scenealigner.inference import SOFT_ARGMAX_TEMPERATURE, load_model, sample_descriptors
+from scenealigner.inference import SOFT_ARGMAX_TEMPERATURE, load_model, local_checkpoint, sample_descriptors
 from scenealigner.training import (DensityFloorplanDataset, collate, denormalize, distributed_feature_matching_loss,
                                    feature_matching_loss, geometry_loss, regression_loss, topology_loss)
 from scenealigner.visualization import draw_training_sample, estimate_camera_on_plan
@@ -198,6 +201,9 @@ def main():
     parser.add_argument("--negatives", default="scene", choices=["scene", "batch"],
                         help="batch: the points of other samples of the same scene are negatives too")
     parser.add_argument("--dinov3_weights", default=None, help="Meta's DINOv3 ViT-B/16 weights")
+    parser.add_argument("--init", default=None, help="LoRA layers to start from (local directory or Hugging Face "
+                        "repository, as load_model, e.g. jhcho99/SceneAligner); default: new LoRA layers")
+    parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--wandb_project", default=None, help="logs the losses and the visualizations to Weights & Biases")
     parser.add_argument("--wandb_name", default=None, help="name of the wandb run")
@@ -246,10 +252,14 @@ def main():
     if rank:  # the first process downloads the DINOv3 weights
         dist.barrier()
     model = get_peft_model(load_model("pre-trained", args.dinov3_weights), lora)
+    if args.init:  # fine-tuning: same LoRA configuration as the checkpoint (that of the C3 / Structured3D training)
+        result = set_peft_model_state_dict(model, load_peft_weights(local_checkpoint(args.init)))
+        mismatch = result.unexpected_keys + [k for k in result.missing_keys if "lora_" in k]
+        assert not mismatch, f"--init {args.init}: keys not matching the LoRA layers {mismatch[:5]}"
     if rank == 0 and num_gpus > 1:
         dist.barrier()
     model.train()
-    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=1e-4)
+    optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr)
 
     if rank == 0:
         os.makedirs(os.path.join(args.output, "vis"), exist_ok=True)

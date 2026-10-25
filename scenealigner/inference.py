@@ -48,11 +48,17 @@ def load_model(checkpoint_dir=MODEL_REPO, dinov3_weights=None):
     base_model.load_state_dict(state_dict)
     if checkpoint_dir == "pre-trained":
         return base_model.eval().to("cuda")
-    if not os.path.isdir(checkpoint_dir) and checkpoint_dir.count("/") > 1:  # <user>/<repository>/<subfolder>
+    return PeftModel.from_pretrained(base_model, local_checkpoint(checkpoint_dir)).eval().to("cuda")
+
+
+def local_checkpoint(checkpoint_dir):
+    """Local directory of LoRA layers: checkpoint_dir itself, or the download of <user>/<repository>/<subfolder>
+    (a repository without subfolder is left to PeftModel.from_pretrained / load_peft_weights)."""
+    if not os.path.isdir(checkpoint_dir) and checkpoint_dir.count("/") > 1:
         parts = checkpoint_dir.split("/")
         repo, subfolder = "/".join(parts[:2]), "/".join(parts[2:])
         checkpoint_dir = os.path.join(snapshot_download(repo, allow_patterns=f"{subfolder}/*"), subfolder)
-    return PeftModel.from_pretrained(base_model, checkpoint_dir).eval().to("cuda")
+    return checkpoint_dir
 
 
 def reconstruct_projection_geometry(points_cam0, points_conf, est_gravity_cam, conf_threshold_percent=45.0,
