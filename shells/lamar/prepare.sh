@@ -53,6 +53,7 @@ for split in $SPLITS; do
     output="$DATA$([[ $split == train ]] || echo "/$split")"
     epochs=$([[ $split == train ]] && echo "$EPOCHS" || echo 1)
     windows=$([[ $split == train ]] && echo "$WINDOWS" || echo "$VAL_WINDOWS")
+    spread=$([[ $split == test ]] && echo 1 || echo 8)  # test: consecutive frames (interval 1); others: n of n to 8 n frames
     python train/lamar/prepare_lamar.py --stage samples "${common[@]}" --sessions "$split" --workers "$NUM_WORKERS" \
-        --output "$output" --epochs "$epochs" --windows_per_epoch "$windows"
+        --output "$output" --epochs "$epochs" --windows_per_epoch "$windows" --max_spread "$spread"
 done

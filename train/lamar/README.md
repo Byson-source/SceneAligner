@@ -202,7 +202,8 @@ a batch of 4 windows per GPU: 32 on rt_HF, lr unchanged); the points of the batc
 of the feature matching loss (all_gather), and the logs are the mean over the GPUs.
 
 `prepare.sh` also makes one set of validation windows: for now of the test sessions (the val split is too short to check
-the training), drawn and augmented as the train windows (indoor frames inside the floorplan, as UnLoc), in `$DATA/test/epoch_000` (`SPLITS`, default `train test`; only these windows:
+the training), drawn and augmented as the train windows (indoor frames inside the floorplan, as UnLoc) but of consecutive
+frames (`--max_spread 1`), in `$DATA/test/epoch_000` (`SPLITS`, default `train test`; only these windows:
 `qsub -v RTYPE=rt_HF,SPLITS=test shells/lamar/prepare_hf.sh`; the UnLoc val session: `SPLITS="train val"` and
 `VAL_DATA=$DATA/val`). `train.py` takes the windows of
 `<data>/epoch_<e>` at epoch e (in turn if there are fewer sets than epochs). When they exist, `train.sh` passes them to
