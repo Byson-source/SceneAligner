@@ -152,21 +152,35 @@ def denormalize(img):
     return (img.clamp(0, 1) * 255).round().to(torch.uint8).numpy()
 
 
-def feature_matching_loss(feat_a, feat_b, same_scene, valid, temperature=0.07, near=None):
+def info_nce(logits, target, soft=None):
+    """Cross entropy of the rows of logits to the candidate target (one per row) or, with soft (rows, candidates),
+    to the normalized weights of the soft positives (the target included)."""
+    if soft is None:
+        return F.cross_entropy(logits, target)
+    weights = soft / soft.sum(dim=-1, keepdim=True)
+    return -(weights * F.log_softmax(logits, dim=-1).masked_fill(weights == 0, 0)).sum(dim=-1).mean()
+
+
+def feature_matching_loss(feat_a, feat_b, same_scene, valid, temperature=0.07, near=None, soft=None):
     """Symmetric InfoNCE over all points of the batch (Eq. 2). feat_a, feat_b: (B, N, C).
 
     same_scene (B, B): pairs of different samples of one scene, whose points are not used as negatives.
     near (B * N, B * N): optional pairs of points not used as negatives either (symmetric, False for a point and itself).
+    soft (B * N, B * N): optional weights of soft positives (symmetric, 1 for a point and itself) instead of the point
+    itself only.
     """
     B, N, C = feat_a.shape
     logits = torch.matmul(F.normalize(feat_a, dim=-1).reshape(B * N, C), F.normalize(feat_b, dim=-1).reshape(B * N, C).T) / temperature
     mask = same_scene[:, None, :, None].expand(B, N, B, N).reshape(B * N, B * N)
-    logits = logits.masked_fill(mask if near is None else mask | near, float("-inf"))
+    mask = mask if near is None else mask | near
+    logits = logits.masked_fill(mask, float("-inf"))
+    soft = None if soft is None else soft.masked_fill(mask, 0)
     idx = torch.nonzero(valid.reshape(B * N)).squeeze(1)
-    return (F.cross_entropy(logits[idx], idx) + F.cross_entropy(logits.T[idx], idx)) / 2
+    soft_ab, soft_ba = (None, None) if soft is None else (soft[idx], soft.T[idx])
+    return (info_nce(logits[idx], idx, soft_ab) + info_nce(logits.T[idx], idx, soft_ba)) / 2
 
 
-def distributed_feature_matching_loss(feat_a, feat_b, same_scene, valid, temperature=0.07, near=None):
+def distributed_feature_matching_loss(feat_a, feat_b, same_scene, valid, temperature=0.07, near=None, soft=None):
     """feature_matching_loss over the points of the samples of all GPUs (DistributedDataParallel): the local points
     are the queries, the points of every GPU (all_gather, with gradients) the candidates. feat_a, feat_b: (B, N, C).
 
@@ -174,6 +188,8 @@ def distributed_feature_matching_loss(feat_a, feat_b, same_scene, valid, tempera
     than itself, whose points are not used as negatives. The gradients averaged by DDP are those of the mean loss.
     near (B * N, W * B * N): optional pairs of a local point and a point of the global batch not used as negatives
     either (False for a point and itself).
+    soft (B * N, W * B * N): optional weights of soft positives (1 for a point and itself, symmetric over the global
+    batch) instead of the point itself only.
     """
     import torch.distributed as dist
     import torch.distributed.nn.functional as dist_nn
@@ -187,7 +203,8 @@ def distributed_feature_matching_loss(feat_a, feat_b, same_scene, valid, tempera
     logits_ba = (b @ all_a.T / temperature).masked_fill(mask, float("-inf"))  # floorplan -> density points
     idx = torch.nonzero(valid.reshape(B * N)).squeeze(1)
     target = idx + dist.get_rank() * B * N  # the same point in the global batch
-    return (F.cross_entropy(logits_ab[idx], target) + F.cross_entropy(logits_ba[idx], target)) / 2
+    soft = None if soft is None else soft.masked_fill(mask, 0)[idx]
+    return (info_nce(logits_ab[idx], target, soft) + info_nce(logits_ba[idx], target, soft)) / 2
 
 
 def regression_loss(pred, gt, weights, delta=0.02):

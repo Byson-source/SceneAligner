@@ -33,6 +33,7 @@ WANDB_PROJECT="${WANDB_PROJECT:-scenealigner-lamar}"
 NEGATIVES="${NEGATIVES:-batch}"  # the other windows of the batch are negatives (all windows share the floorplan)
 PLAN_GRID="${PLAN_GRID:-8}"      # one correspondence per 8 px (1.4 m) of the 1024 px floorplan
 FALSE_NEGATIVE_PX="${FALSE_NEGATIVE_PX:-8}"  # points within 8 px (1.4 m) on the floorplan are not negatives (0: off)
+FALSE_NEGATIVES="${FALSE_NEGATIVES:-soft}"   # but soft positives (Gaussian, sigma 4 px), or "ignore"
 NUM_GPUS="${NUM_GPUS:-$(nvidia-smi -L | wc -l)}"
 VAL_DATA="${VAL_DATA:-$DATA/test}"  # validation windows (prepare.sh; for now the test split, $DATA/val for the UnLoc val), evaluated after every epoch if they exist
 LR="${LR:-1e-4}"
@@ -43,5 +44,5 @@ if compgen -G "$VAL_DATA/epoch_*/lamar_mapanything.csv" > /dev/null; then val_ar
 
 torchrun --standalone --nproc_per_node="$NUM_GPUS" train.py --data "$DATA" --output "$RUN" --epochs "$EPOCHS" --lr "$LR" \
     --resolutions 1024 --min_points 1000 \
-    --negatives "$NEGATIVES" --plan_grid "$PLAN_GRID" --false_negative_px "$FALSE_NEGATIVE_PX" "${init_args[@]}" "${val_args[@]}" "${resume_args[@]}" \
+    --negatives "$NEGATIVES" --plan_grid "$PLAN_GRID" --false_negative_px "$FALSE_NEGATIVE_PX" --false_negatives "$FALSE_NEGATIVES" "${init_args[@]}" "${val_args[@]}" "${resume_args[@]}" \
     --wandb_project "$WANDB_PROJECT" --wandb_name "$(basename "$RUN")"
