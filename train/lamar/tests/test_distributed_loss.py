@@ -20,35 +20,40 @@ WORLD, B, N, C = 2, 3, 5, 8
 
 
 def batch(negatives):
-    """Features (W * B, N, C) of the global batch, its valid points (as many on each GPU) and same_scene (W * B, W * B)."""
+    """Features (W * B, N, C) of the global batch, its valid points (as many on each GPU), same_scene (W * B, W * B)
+    and near (W * B * N, W * B * N): random symmetric pairs of points, not of a point and itself."""
     gen = torch.Generator().manual_seed(0)
     feat_a, feat_b = torch.randn(WORLD * B, N, C, generator=gen), torch.randn(WORLD * B, N, C, generator=gen)
     valid = torch.ones(WORLD * B, N, dtype=torch.bool)
     valid[[0, B], -1] = False  # one padded point per GPU
     scene = torch.tensor([0, 1, 0, 1, 1, 2])
     same_scene = (scene[:, None] == scene[None]) & ~torch.eye(WORLD * B, dtype=torch.bool)
-    return feat_a, feat_b, valid, same_scene if negatives == "scene" else torch.zeros_like(same_scene)
+    near = torch.rand(WORLD * B * N, WORLD * B * N, generator=gen) < 0.2
+    near = (near | near.T) & ~torch.eye(WORLD * B * N, dtype=torch.bool)
+    return feat_a, feat_b, valid, same_scene if negatives == "scene" else torch.zeros_like(same_scene), near
 
 
-def worker(rank, port, negatives, out):
+def worker(rank, port, negatives, with_near, out):
     os.environ.update(MASTER_ADDR="127.0.0.1", MASTER_PORT=str(port))
     dist.init_process_group("gloo", rank=rank, world_size=WORLD)
-    feat_a, feat_b, valid, same_scene = batch(negatives)
+    feat_a, feat_b, valid, same_scene, near = batch(negatives)
     local = slice(rank * B, (rank + 1) * B)
     a, b = feat_a[local].clone().requires_grad_(), feat_b[local].clone().requires_grad_()
-    loss = distributed_feature_matching_loss(a, b, same_scene[local], valid[local])
+    loss = distributed_feature_matching_loss(a, b, same_scene[local], valid[local],
+                                             near=near[rank * B * N:(rank + 1) * B * N] if with_near else None)
     loss.backward()
     out[rank] = (loss.detach(), a.grad / WORLD, b.grad / WORLD)  # DDP averages the gradients over the GPUs
     dist.destroy_process_group()
 
 
+@pytest.mark.parametrize("with_near", [False, True])
 @pytest.mark.parametrize("negatives", ["scene", "batch"])
-def test_distributed_loss_matches_the_concatenated_batch(negatives):
+def test_distributed_loss_matches_the_concatenated_batch(negatives, with_near):
     out = mp.Manager().dict()
-    mp.spawn(worker, args=(29500 + (negatives == "batch"), negatives, out), nprocs=WORLD)
-    feat_a, feat_b, valid, same_scene = batch(negatives)
+    mp.spawn(worker, args=(29500 + (negatives == "batch") + 2 * with_near, negatives, with_near, out), nprocs=WORLD)
+    feat_a, feat_b, valid, same_scene, near = batch(negatives)
     feat_a.requires_grad_(), feat_b.requires_grad_()
-    loss = feature_matching_loss(feat_a, feat_b, same_scene, valid)
+    loss = feature_matching_loss(feat_a, feat_b, same_scene, valid, near=near if with_near else None)
     loss.backward()
     assert torch.allclose(sum(out[r][0] for r in range(WORLD)) / WORLD, loss.detach(), atol=1e-5)
     assert torch.allclose(torch.cat([out[r][1] for r in range(WORLD)]), feat_a.grad, atol=1e-6)

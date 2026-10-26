@@ -18,10 +18,10 @@ removed from this fork) where correspondences come from ground-truth geometry in
 | minimum correspondences | 8 per photo | 10 per sample | 8 per frame, 10 per LiDAR sample |
 | consistency test | RANSAC similarity, 10 px of 512 | - | as C3 (reconstruction samples) |
 | floorplan | 512 px | 512 px | 1024 px, walls thickened to 0.5 m (1-3 px lines in hge.png) |
-| `train.py` | defaults | `--epochs 20 --resolutions 512 --min_points 1000` | `--epochs 20 --resolutions 1024 --min_points 1000 --negatives batch --plan_grid 8` |
+| `train.py` | defaults | `--epochs 20 --resolutions 512 --min_points 1000` | `--epochs 20 --resolutions 1024 --min_points 1000 --negatives batch --plan_grid 8 --false_negative_px 8` |
 
 The 0.2 m wall tolerance is strict: with the error of the affine transform (about 0.25 m) and of the reconstruction,
-far walls lose many points (0.5 m kept them but was found too loose; `--max_wall_dist` changes it). `--negatives batch` and `--plan_grid 8` are the only additions to the training of SceneAligner (see
+far walls lose many points (0.5 m kept them but was found too loose; `--max_wall_dist` changes it). `--negatives batch`, `--plan_grid 8` and `--false_negative_px 8` are the only additions to the training of SceneAligner (see
 Training). `train.py` also logs to Weights & Biases (`--wandb_project`), saves a visualization every
 `--vis_every` steps and, with `--resume`, resumes after the last completed epoch.
 
@@ -140,7 +140,7 @@ python train/lamar/visualize_correspondences.py --map_dir <LAMAR_ROOT>/HGE/sessi
 
 ```bash
 python train.py --data <data> --output <run> --epochs 20 --resolutions 1024 --min_points 1000 \
-    --negatives batch --plan_grid 8 --wandb_project scenealigner-lamar --wandb_name <run>
+    --negatives batch --plan_grid 8 --false_negative_px 8 --wandb_project scenealigner-lamar --wandb_name <run>
 ```
 
 Every 100 steps the losses go to `log.csv` and wandb; every `--vis_every` 500 steps, `<run>/vis/<step>.png` and
@@ -158,6 +158,11 @@ at its chance level log(1024) whatever the model (first run). `shells/train/trai
 correspondence per 8 px cell of the floorplan, the free slots being random negatives over the whole plan). `acc`
 (valid points whose most similar plan patch is within one patch of the ground truth) and `chance` (the loss of
 uniform descriptors) are logged with the losses.
+
+With every window of the building as negatives, the points of other windows at the same place (the MapAnything and
+LiDAR samples of one window, windows that pass by again, adjacent `--plan_grid` cells) are pushed apart although
+they correspond. `--false_negative_px 8` removes from the negatives of a point the points of the batch closer than
+8 px (1.4 m) on the floorplan before the augmentation (`plan_ref` of the dataset, `near_mask` of `train.py`).
 
 ## Evaluation
 

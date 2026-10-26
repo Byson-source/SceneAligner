@@ -101,14 +101,37 @@ def ramp(step, start, duration):
     return (step - start) / duration
 
 
-def compute_loss(model, batch, step, total_steps, negatives="scene"):
+def near_mask(plan_ref, scene_ids, radius):
+    """Pairs (B * N, W * B * N) of a local point and a point of the global batch (rank-major) of one scene whose
+    floorplan positions before the augmentation are closer than radius pixels, other than the point itself: not
+    negatives of the feature matching loss (the same place seen by another window, source or cell). plan_ref: (B, N, 2),
+    NaN for the padding points."""
+    rank, num_gpus = world()
+    B, N, _ = plan_ref.shape
+    local = plan_ref.cuda().reshape(B * N, 2)
+    everywhere = local
+    if num_gpus > 1:
+        gathered = [torch.empty_like(local) for _ in range(num_gpus)]
+        dist.all_gather(gathered, local)
+        everywhere = torch.cat(gathered)
+    same = same_scene_mask(scene_ids, "scene")
+    same[torch.arange(B), rank * B + torch.arange(B)] = True
+    near = (torch.cdist(local, everywhere) < radius) & same[:, None, :, None].expand(B, N, -1, N).reshape(B * N, -1)
+    near[torch.arange(B * N), rank * B * N + torch.arange(B * N)] = False
+    return near
+
+
+def compute_loss(model, batch, step, total_steps, negatives="scene", false_negative_px=0):
     """Loss of a batch at a training step, its terms, the weights of the curriculum and diagnostics, and the
     predicted floorplan coordinates (B, N, 2) in [0, 1] of the density-map points.
 
     model: FeatureExtractor, wrapped by DistributedDataParallel under torchrun (the points of all GPUs are negatives).
 
     negatives: "scene" (the points of other samples of the same scene are not negatives) or "batch" (all points of
-    the batch are negatives, e.g. windows at different places of one building)."""
+    the batch are negatives, e.g. windows at different places of one building).
+
+    false_negative_px: if > 0, the points closer than this many floorplan pixels (before the augmentation) to a point of
+    the same scene are not its negatives (near_mask)."""
     density_img, plan_img = batch["density_img"].cuda(), batch["plan_img"].cuda()
     pts_density, pts_plan, valid = batch["density_pts"].cuda(), batch["plan_pts"].cuda(), batch["valid"].cuda()
     same_scene = same_scene_mask(batch["scene_id"], negatives)
@@ -118,7 +141,8 @@ def compute_loss(model, batch, step, total_steps, negatives="scene"):
     grid_dim = map_plan.shape[-1]
     desc_density = sample_descriptors(map_density, pts_density)
     matching_loss = distributed_feature_matching_loss if dist.is_initialized() else feature_matching_loss
-    losses = {"feat": matching_loss(desc_density, sample_descriptors(map_plan, pts_plan), same_scene, valid)}
+    near = near_mask(batch["plan_ref"], batch["scene_id"], false_negative_px) if false_negative_px > 0 else None
+    losses = {"feat": matching_loss(desc_density, sample_descriptors(map_plan, pts_plan), same_scene, valid, near=near)}
     loss = losses["feat"]
 
     # Predicted floorplan coordinates in [0, 1]: soft-argmax over the patch centers
@@ -165,7 +189,7 @@ def validate(model, extractor, dataset, args, step, total_steps):
     model.eval()
     with torch.no_grad():
         for batch in tqdm(loader, desc="val", disable=rank != 0):
-            loss, losses, _ = compute_loss(extractor, batch, step, total_steps, args.negatives)
+            loss, losses, _ = compute_loss(extractor, batch, step, total_steps, args.negatives, args.false_negative_px)
             for k, v in {"loss": loss, **losses}.items():
                 totals[k] = totals.get(k, 0) + v.float()
     model.train()
@@ -200,6 +224,8 @@ def main():
     parser.add_argument("--plan_grid", type=int, default=0, help="one correspondence per cell of this many floorplan px (0: all)")
     parser.add_argument("--negatives", default="scene", choices=["scene", "batch"],
                         help="batch: the points of other samples of the same scene are negatives too")
+    parser.add_argument("--false_negative_px", type=float, default=0, help="points closer than this many floorplan "
+                        "pixels (before the augmentation) are not negatives of each other (0: all are)")
     parser.add_argument("--dinov3_weights", default=None, help="Meta's DINOv3 ViT-B/16 weights")
     parser.add_argument("--init", default=None, help="LoRA layers to start from (local directory or Hugging Face "
                         "repository, as load_model, e.g. jhcho99/SceneAligner); default: new LoRA layers")
@@ -288,7 +314,7 @@ def main():
             sampler.set_epoch(epoch)
         for batch in tqdm(loader, desc=f"epoch {epoch + 1}/{args.epochs}", disable=rank != 0):
             optimizer.zero_grad()
-            loss, losses, pred = compute_loss(extractor, batch, step, total_steps, args.negatives)
+            loss, losses, pred = compute_loss(extractor, batch, step, total_steps, args.negatives, args.false_negative_px)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()

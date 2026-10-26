@@ -84,6 +84,8 @@ class DensityFloorplanDataset(Dataset):
         density = Image.open(os.path.join(self.root, row.density)).convert("RGB")
         plan = Image.open(os.path.join(self.root, row.floorplan)).convert("RGB")
         pts_plan, pts_density = np.load(os.path.join(self.root, row.correspondences))  # (N, 2) pixels each
+        plan_ref = pts_plan.copy()  # floorplan pixels before the augmentation, indexed by ids below
+        ids = np.arange(len(pts_plan), dtype=np.float32)[:, None]  # carried as one more column of the other points
         # Camera position of the last frame on both images and its photo (optional columns, for visualization)
         camera_plan, camera_density = parse_point(row.get("camera_plan")), parse_point(row.get("camera_density"))
         rgb_path = row.rgb if isinstance(row.get("rgb"), str) else ""
@@ -95,13 +97,15 @@ class DensityFloorplanDataset(Dataset):
         k, (w, h) = np.random.randint(0, 4), plan.size
         plan, pts_plan = random_rotate(plan, pts_plan, k)
         camera_plan = rotate_points(camera_plan[None], k, w, h)[0]
-        plan, pts_plan, pts_density, camera_plan = self.random_crop(plan, pts_plan, pts_density, camera_plan)
-        density, pts_density, pts_plan, camera_density = self.random_crop(density, pts_density, pts_plan, camera_density)
+        plan, pts_plan, other, camera_plan = self.random_crop(plan, pts_plan, np.hstack([pts_density, ids]), camera_plan)
+        pts_density, ids = other[:, :2], other[:, 2:]
+        density, pts_density, other, camera_density = self.random_crop(density, pts_density, np.hstack([pts_plan, ids]), camera_density)
+        pts_plan, ids = other[:, :2], other[:, 2:]
         plan, density = self.jitter_plan(plan), self.jitter_density(density)
         if self.plan_grid:  # one random correspondence per floorplan cell
             perm = np.random.permutation(len(pts_plan))
             _, first = np.unique(np.floor(pts_plan[perm] / self.plan_grid), axis=0, return_index=True)
-            pts_plan, pts_density = pts_plan[perm[first]], pts_density[perm[first]]
+            pts_plan, pts_density, ids = pts_plan[perm[first]], pts_density[perm[first]], ids[perm[first]]
 
         # Pixels -> [-1, 1] (grid_sample), without duplicates
         camera_density = 2 * ((camera_density + 0.5) / np.float32(density.size)) - 1
@@ -112,26 +116,28 @@ class DensityFloorplanDataset(Dataset):
             density = density.resize((self.image_size, self.image_size), Image.Resampling.BICUBIC)
             plan = plan.resize((self.image_size, self.image_size), Image.Resampling.BICUBIC)
         _, unique = np.unique(np.round(np.hstack([pts_density, pts_plan]), decimals=3), axis=0, return_index=True)
-        pts_density, pts_plan = pts_density[np.sort(unique)], pts_plan[np.sort(unique)]
+        pts_density, pts_plan, ids = pts_density[np.sort(unique)], pts_plan[np.sort(unique)], ids[np.sort(unique)]
+        plan_ref = plan_ref[ids[:, 0].astype(int)]
 
         # num_points correspondences; missing ones are random points, used as negatives only
         n = len(pts_density)
         if n >= self.num_points:
             keep = np.random.choice(n, self.num_points, replace=False)
-            pts_density, pts_plan = torch.tensor(pts_density[keep]), torch.tensor(pts_plan[keep])
+            pts_density, pts_plan, plan_ref = (torch.tensor(x[keep]) for x in (pts_density, pts_plan, plan_ref))
         else:
             pts_density = torch.cat([torch.tensor(pts_density), torch.rand(self.num_points - n, 2) * 2 - 1])
             pts_plan = torch.cat([torch.tensor(pts_plan), torch.rand(self.num_points - n, 2) * 2 - 1])
+            plan_ref = torch.cat([torch.tensor(plan_ref), torch.full((self.num_points - n, 2), float("nan"))])
         valid = torch.arange(self.num_points) < n
         return {"density_img": norm_transform(density), "plan_img": norm_transform(plan), "density_pts": pts_density,
-                "plan_pts": pts_plan, "valid": valid, "scene_id": row.scene_id,
+                "plan_pts": pts_plan, "plan_ref": plan_ref.float(), "valid": valid, "scene_id": row.scene_id,
                 "camera_density": torch.tensor(camera_density), "camera_plan": torch.tensor(camera_plan), "rgb_path": rgb_path}
 
 
 def collate(batch, resolutions):
     """All images of a batch are resized to one resolution, drawn at random (mixed-resolution training)."""
     size = random.choice(resolutions)
-    out = {k: torch.stack([sample[k] for sample in batch]) for k in ("density_pts", "plan_pts", "valid", "camera_density", "camera_plan")}
+    out = {k: torch.stack([sample[k] for sample in batch]) for k in ("density_pts", "plan_pts", "plan_ref", "valid", "camera_density", "camera_plan")}
     for k in ("density_img", "plan_img"):  # the points are normalized: no rescaling
         out[k] = torch.cat([F.interpolate(sample[k][None], size=(size, size), mode="bicubic", antialias=True) for sample in batch])
     out["scene_id"] = [sample["scene_id"] for sample in batch]
@@ -146,24 +152,28 @@ def denormalize(img):
     return (img.clamp(0, 1) * 255).round().to(torch.uint8).numpy()
 
 
-def feature_matching_loss(feat_a, feat_b, same_scene, valid, temperature=0.07):
+def feature_matching_loss(feat_a, feat_b, same_scene, valid, temperature=0.07, near=None):
     """Symmetric InfoNCE over all points of the batch (Eq. 2). feat_a, feat_b: (B, N, C).
 
     same_scene (B, B): pairs of different samples of one scene, whose points are not used as negatives.
+    near (B * N, B * N): optional pairs of points not used as negatives either (symmetric, False for a point and itself).
     """
     B, N, C = feat_a.shape
     logits = torch.matmul(F.normalize(feat_a, dim=-1).reshape(B * N, C), F.normalize(feat_b, dim=-1).reshape(B * N, C).T) / temperature
-    logits = logits.masked_fill(same_scene[:, None, :, None].expand(B, N, B, N).reshape(B * N, B * N), float("-inf"))
+    mask = same_scene[:, None, :, None].expand(B, N, B, N).reshape(B * N, B * N)
+    logits = logits.masked_fill(mask if near is None else mask | near, float("-inf"))
     idx = torch.nonzero(valid.reshape(B * N)).squeeze(1)
     return (F.cross_entropy(logits[idx], idx) + F.cross_entropy(logits.T[idx], idx)) / 2
 
 
-def distributed_feature_matching_loss(feat_a, feat_b, same_scene, valid, temperature=0.07):
+def distributed_feature_matching_loss(feat_a, feat_b, same_scene, valid, temperature=0.07, near=None):
     """feature_matching_loss over the points of the samples of all GPUs (DistributedDataParallel): the local points
     are the queries, the points of every GPU (all_gather, with gradients) the candidates. feat_a, feat_b: (B, N, C).
 
     same_scene (B, W * B): pairs of a local sample and a sample of the global batch (rank-major) of one scene, other
     than itself, whose points are not used as negatives. The gradients averaged by DDP are those of the mean loss.
+    near (B * N, W * B * N): optional pairs of a local point and a point of the global batch not used as negatives
+    either (False for a point and itself).
     """
     import torch.distributed as dist
     import torch.distributed.nn.functional as dist_nn
@@ -172,6 +182,7 @@ def distributed_feature_matching_loss(feat_a, feat_b, same_scene, valid, tempera
     a, b = F.normalize(feat_a, dim=-1).reshape(B * N, C), F.normalize(feat_b, dim=-1).reshape(B * N, C)
     all_a, all_b = torch.cat(dist_nn.all_gather(a)), torch.cat(dist_nn.all_gather(b))
     mask = same_scene[:, None, :, None].expand(B, N, same_scene.shape[1], N).reshape(B * N, -1)
+    mask = mask if near is None else mask | near
     logits_ab = (a @ all_b.T / temperature).masked_fill(mask, float("-inf"))  # density -> floorplan points
     logits_ba = (b @ all_a.T / temperature).masked_fill(mask, float("-inf"))  # floorplan -> density points
     idx = torch.nonzero(valid.reshape(B * N)).squeeze(1)
