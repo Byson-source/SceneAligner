@@ -8,7 +8,8 @@ sample of the batch: the floorplan with the ground-truth and predicted correspon
 camera (ground truth and estimated from the predicted correspondences), next to the photo of that camera (data
 with the camera_plan, camera_density and rgb columns, see train/lamar/prepare_lamar.py). The images are also saved
 to <run>/vis/. With --val_data, the losses and diagnostics on the val data are logged after every epoch (val/ on
-wandb, <run>/val_log.csv).
+wandb, <run>/val_log.csv), with the images of --val_vis val samples (the same at every epoch; val/sample on wandb,
+<run>/vis/val_<epoch>_<k>.png).
 
 With torchrun (shells/train/train.sh), one process per GPU of the node (DistributedDataParallel): each GPU takes a
 batch of 4 samples, and the points of the batches of all GPUs are the candidates of the feature matching loss.
@@ -191,22 +192,26 @@ def compute_loss(model, batch, step, total_steps, negatives="scene", false_negat
 
 
 def validate(model, extractor, dataset, args, step, total_steps):
-    """Mean losses and diagnostics of compute_loss on the val data, averaged over the GPUs. The augmentations of the
-    data loader are seeded by --seed: the same at every epoch."""
+    """Mean losses and diagnostics of compute_loss on the val data, averaged over the GPUs, and the images (visualize)
+    of the first sample of args.val_vis batches spread over the val data (first GPU, else empty). The augmentations
+    of the data loader are seeded by --seed: the same at every epoch."""
     rank, num_gpus = world()
     sampler = DistributedSampler(dataset, shuffle=False) if num_gpus > 1 else None
     loader = DataLoader(dataset, batch_size=4, sampler=sampler, num_workers=4, generator=torch.Generator().manual_seed(args.seed),
                         collate_fn=partial(collate, resolutions=args.resolutions))
-    totals = {}
+    totals, images = {}, []
+    vis_every = max(1, len(loader) // args.val_vis) if args.val_vis else 0
     model.eval()
     with torch.no_grad():
-        for batch in tqdm(loader, desc="val", disable=rank != 0):
-            loss, losses, _ = compute_loss(extractor, batch, step, total_steps, args.negatives, args.false_negative_px,
-                                           args.false_negatives)
+        for i, batch in enumerate(tqdm(loader, desc="val", disable=rank != 0)):
+            loss, losses, pred = compute_loss(extractor, batch, step, total_steps, args.negatives, args.false_negative_px,
+                                              args.false_negatives)
             for k, v in {"loss": loss, **losses}.items():
                 totals[k] = totals.get(k, 0) + v.float()
+            if rank == 0 and vis_every and i % vis_every == 0 and len(images) < args.val_vis:
+                images.append((batch["scene_id"][0], visualize(batch, pred)))
     model.train()
-    return mean_over_gpus({k: v / len(loader) for k, v in totals.items()})
+    return mean_over_gpus({k: v / len(loader) for k, v in totals.items()}), images
 
 
 def visualize(batch, pred, ransac_thr=0.04):
@@ -252,6 +257,7 @@ def main():
                         "evaluated after every epoch")
     parser.add_argument("--resume", action="store_true", help="continues the run of --output after its last epoch (state.pt)")
     parser.add_argument("--vis_every", type=int, default=500, help="steps between two visualizations (0: none)")
+    parser.add_argument("--val_vis", type=int, default=4, help="val samples visualized after every epoch (0: none)")
     args = parser.parse_args()
     # Resume after the last completed epoch (LoRA layers, optimizer, step, wandb run) only with --resume
     state_path = os.path.join(args.output, "state.pt")
@@ -356,7 +362,7 @@ def main():
             torch.save({"epoch": epoch, "step": step, "optimizer": optimizer.state_dict(),
                         "wandb_id": wandb.run.id if wandb else None}, state_path)
         if val_dataset is not None:
-            val = validate(model, extractor, val_dataset, args, step, total_steps)
+            val, images = validate(model, extractor, val_dataset, args, step, total_steps)
             if rank == 0:
                 val_path = os.path.join(args.output, "val_log.csv")
                 new = not os.path.exists(val_path)
@@ -365,8 +371,13 @@ def main():
                         csv.writer(f).writerow(["epoch", "step", "loss", *columns])
                     csv.writer(f).writerow([epoch, step, val["loss"].item()] + [val[k].item() if k in val else "" for k in columns])
                 print(f"val after epoch {epoch + 1}: " + ", ".join(f"{k} {v.item():.4f}" for k, v in val.items()))
+                for k, (_, image) in enumerate(images):
+                    Image.fromarray(image).save(os.path.join(args.output, "vis", f"val_{epoch:03d}_{k}.png"))
                 if wandb:
-                    wandb.log({f"val/{k}": v.item() for k, v in val.items()}, step=step)
+                    logged = {f"val/{k}": v.item() for k, v in val.items()}
+                    if images:
+                        logged["val/sample"] = [wandb.Image(image, caption=f"epoch {epoch + 1}: {name}") for name, image in images]
+                    wandb.log(logged, step=step)
     if num_gpus > 1:
         dist.barrier()  # the first process saves the last epoch
         dist.destroy_process_group()
