@@ -273,9 +273,12 @@ def main():
             print(f"wandb: {error}\nwandb: offline run in {os.path.abspath('wandb')} (upload: wandb sync <run folder>)")
             wandb.init(**init, mode="offline")
 
-    random.seed(args.seed + rank)  # different augmentations and dropout on each GPU
-    np.random.seed(args.seed + rank)
-    torch.manual_seed(args.seed + rank)
+    # Different augmentations and dropout on each GPU; offset by the resumed epoch, else a resumed run (e.g. epoch 50 on
+    # the windows of epoch_000 when there are 50 data folders) repeats the shuffle and augmentations of epoch 0
+    seed = args.seed + rank + 1000 * (state["epoch"] + 1 if state else 0)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     image_size = args.resolutions[0] if len(args.resolutions) == 1 else None
     datasets = [DensityFloorplanDataset(folder, min_points=args.min_points, image_size=image_size, plan_grid=args.plan_grid)
                 for folder in epoch_folders(args.data)]
@@ -290,6 +293,8 @@ def main():
     total_steps = sum(len(epoch_loader(epoch)[0]) for epoch in range(args.epochs))
     if rank == 0:
         print(f"{len(datasets)} data folders of {sum(len(d) for d in datasets)} samples, {total_steps} steps")
+        if args.epochs > len(datasets):
+            print(f"{args.epochs} epochs > {len(datasets)} data folders: epoch e takes epoch_<e % {len(datasets)}> again")
     val_dataset = DensityFloorplanDataset(epoch_folders(args.val_data)[0], min_points=args.min_points, image_size=image_size,
                                           plan_grid=args.plan_grid) if args.val_data else None
 
