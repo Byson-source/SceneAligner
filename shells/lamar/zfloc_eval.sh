@@ -11,7 +11,7 @@
 #   2. Z-FLoc tools/metadata_generation/generate_pcd.py: MapAnything point clouds of the windows of every length
 #      ($PCD_ROOT/hge_<L>; one GPU per length, existing windows are skipped)
 #   3. train/lamar/evaluate_zfloc.py: SceneAligner + RANSAC restricted to the scale band of Z-FLoc, metric of Z-FLoc
-# Called by zfloc_eval_hf.sh / zfloc_eval_hg.sh with DATA, RTYPE and CHECKPOINT (a run directory trained on HGE,
+# Called by zfloc_eval_hg.sh (one GPU is enough) with DATA, RTYPE and CHECKPOINT (a run directory trained on HGE,
 # "pre-trained" or jhcho99/SceneAligner). SCALE_TOL: half width of the scale band (default 0.35 of Z-FLoc, -1: unrestricted).
 
 source /etc/profile.d/modules.sh

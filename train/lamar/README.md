@@ -202,7 +202,7 @@ best one is refitted on its inliers with its scale clipped to the band (`ransac.
 of `--ransac_thr` as `cv2.estimateAffinePartial2D`). `--scale_tol -1` uses `cv2.estimateAffinePartial2D`;
 `evaluate_lamar.py --scale_tol 0.35` uses the band on its own reconstructions (default: unrestricted).
 
-`shells/lamar/zfloc_eval.sh` (+`_hf`/`_hg`) runs it all: `create_lamar_hge.py` and `generate_pcd.py` of Z-FLoc
+`shells/lamar/zfloc_eval.sh` (+`_hg`, one GPU is enough) runs it all: `create_lamar_hge.py` and `generate_pcd.py` of Z-FLoc
 (`ZFLOC_REPO`, default `~/oss/z-floc` on a branch with `tools/lamar_setup/`; conda environment `ZFLOC_ENV`, default
 `mapanything`; one GPU per length, the existing point clouds are skipped) into `ZFLOC_DATA` / `PCD_ROOT`
 (default `$DATA/zfloc_hge` / `$DATA/zfloc_pcd`), then `evaluate_zfloc.py` with one process per GPU into
