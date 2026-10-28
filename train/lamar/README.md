@@ -209,8 +209,8 @@ of `--ransac_thr` as `cv2.estimateAffinePartial2D`). `--scale_tol -1` uses `cv2.
 `OUT` (default `outputs/zfloc_eval_<checkpoint>_tol<SCALE_TOL>`); `LENGTHS`, `SEEDS`, `SCALE_TOL`:
 
 ```bash
-qsub -v RTYPE=rt_HF,CHECKPOINT=outputs/lamar_lamar_rt_HF_<date>_<time> shells/lamar/zfloc_eval_hf.sh
-qsub -v RTYPE=rt_HF,CHECKPOINT=outputs/lamar_lamar_rt_HF_<date>_<time>,SCALE_TOL=-1 shells/lamar/zfloc_eval_hf.sh  # unrestricted RANSAC
+qsub -v RTYPE=rt_HG,CHECKPOINT=outputs/lamar_lamar_rt_HF_<date>_<time> shells/lamar/zfloc_eval_hg.sh  # one GPU is enough
+qsub -v RTYPE=rt_HG,CHECKPOINT=outputs/lamar_lamar_rt_HF_<date>_<time>,SCALE_TOL=-1 shells/lamar/zfloc_eval_hg.sh  # unrestricted RANSAC
 ```
 
 The test session 01-18 keeps 516 frames with the index shift of `create_lamar_hge.py` and 483 in the bundled
