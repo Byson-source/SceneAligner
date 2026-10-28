@@ -9,9 +9,10 @@
 # SceneAligner on the inputs of the Z-FLoc LaMAR HGE experiment, from the point clouds to the poses:
 #   1. Z-FLoc tools/lamar_setup/create_lamar_hge.py: kept frames, poses_world.npy, poses_map.npy ($ZFLOC_DATA)
 #   2. Z-FLoc tools/metadata_generation/generate_pcd.py: MapAnything point clouds of the windows of every length
-#      ($PCD_ROOT/hge_<L>; one GPU per length, existing windows are skipped)
+#      ($PCD_ROOT/hge_<L>; one length after the other, existing windows are skipped)
 #   3. train/lamar/evaluate_zfloc.py: SceneAligner + RANSAC restricted to the scale band of Z-FLoc, metric of Z-FLoc
-# Called by zfloc_eval_hg.sh (one GPU is enough) with DATA, RTYPE and CHECKPOINT (a run directory trained on HGE,
+# On one GPU. The progress goes to the job output and to $PCD_ROOT/hge_<L>.log and $OUT/test_results.log.
+# Called by zfloc_eval_hg.sh with DATA, RTYPE and CHECKPOINT (a run directory trained on HGE,
 # "pre-trained" or jhcho99/SceneAligner). SCALE_TOL: half width of the scale band (default 0.35 of Z-FLoc, -1: unrestricted).
 
 source /etc/profile.d/modules.sh
@@ -34,52 +35,38 @@ PCD_ROOT="${PCD_ROOT:-$DATA/zfloc_pcd}"      # point clouds of generate_pcd.py, 
 LENGTHS="${LENGTHS:-15 20 35 50 100}"
 SEEDS="${SEEDS:-42 43 44 45 46}"
 SCALE_TOL="${SCALE_TOL:-0.35}"
-NUM_GPUS="${NUM_GPUS:-$(nvidia-smi -L | wc -l)}"
 OUT="${OUT:-$REPO/outputs/zfloc_eval_$(basename "$CHECKPOINT")_tol${SCALE_TOL}}"
 mkdir -p "$OUT" "$PCD_ROOT"
-echo "$NUM_GPUS GPUs"
+export PYTHONUNBUFFERED=1  # prints of python right away in the job output
+log() { echo "[$(date '+%F %T')] $*"; }
+num_pcds() { find "$PCD_ROOT/hge_$1" -name '*.npz' 2>/dev/null | wc -l; }
+log "checkpoint $CHECKPOINT, scale_tol $SCALE_TOL, lengths $LENGTHS, seeds $SEEDS"
+log "data $ZFLOC_DATA, point clouds $PCD_ROOT, results $OUT"
 
 # 1-2. Point clouds of Z-FLoc
 source activate "$ZFLOC_ENV"
 export PATH="${CONDA_PREFIX}/bin:$PATH"
 cd "$ZFLOC_REPO"
-if [ ! -f "$ZFLOC_DATA/split.yaml" ]; then
+if [ -f "$ZFLOC_DATA/split.yaml" ]; then
+    log "1/3 create_lamar_hge.py: skipped ($ZFLOC_DATA/split.yaml exists)"
+else
+    log "1/3 create_lamar_hge.py -> $ZFLOC_DATA"
     python tools/lamar_setup/create_lamar_hge.py --session-dir "$MAP_DIR" --target-dir "$ZFLOC_DATA"
 fi
-read -ra lengths <<< "$LENGTHS"
-pids=()
-for ((i = 0; i < NUM_GPUS && i < ${#lengths[@]}; i++)); do
-    (  # lengths i, i + NUM_GPUS, ... on GPU i
-        for ((j = i; j < ${#lengths[@]}; j += NUM_GPUS)); do
-            L=${lengths[$j]}
-            CUDA_VISIBLE_DEVICES=$i python tools/metadata_generation/generate_pcd.py --dataset hge --mode hge_complete \
-                --dataset_path "$ZFLOC_DATA" --evol_path "$PCD_ROOT/hge_$L" --traj_len "$L" > "$PCD_ROOT/hge_$L.log" 2>&1
-        done
-    ) &
-    pids+=($!)
-done
-for i in "${!pids[@]}"; do
-    wait "${pids[$i]}" || { echo "generate_pcd on GPU $i failed: see $PCD_ROOT/hge_<L>.log"; exit 1; }
+for L in $LENGTHS; do
+    log "2/3 generate_pcd.py L=$L: $(num_pcds "$L") point clouds already, log $PCD_ROOT/hge_$L.log"
+    python tools/metadata_generation/generate_pcd.py --dataset hge --mode hge_complete --dataset_path "$ZFLOC_DATA" \
+        --evol_path "$PCD_ROOT/hge_$L" --traj_len "$L" 2>&1 | tee "$PCD_ROOT/hge_$L.log"
+    log "2/3 generate_pcd.py L=$L: done, $(num_pcds "$L") point clouds"
 done
 
-# 3. SceneAligner: one process per GPU with a share of the windows, then the merge
+# 3. SceneAligner
 source activate scenealigner
 export PATH="${CONDA_PREFIX}/bin:$PATH"
 cd "$REPO"
-python -c "import sys; print('python:', sys.executable, sys.version.split()[0])"
 output="$OUT/test_results.json"
-args=(--seq_length $LENGTHS --seeds $SEEDS)
-pids=()
-for ((i = 0; i < NUM_GPUS; i++)); do
-    CUDA_VISIBLE_DEVICES=$i python train/lamar/evaluate_zfloc.py --pcd_root "$PCD_ROOT" --zfloc_data "$ZFLOC_DATA" \
-        --map_dir "$MAP_DIR" --floorplan "$FLOORPLAN" --checkpoint_dir "$CHECKPOINT" --plan_size "$PLAN_SIZE" \
-        --scale_tol "$SCALE_TOL" --save_vis --output "$output" --shard "$i" --num_shards "$NUM_GPUS" "${args[@]}" \
-        > "${output%.json}.shard$i.log" 2>&1 &
-    pids+=($!)
-done
-for i in "${!pids[@]}"; do
-    wait "${pids[$i]}" || { echo "shard $i failed: see ${output%.json}.shard$i.log"; exit 1; }
-done
-if ((NUM_GPUS > 1)); then  # one process writes the results itself
-    python train/lamar/evaluate_zfloc.py --merge --output "$output" --num_shards "$NUM_GPUS" "${args[@]}"
-fi
+log "3/3 evaluate_zfloc.py, log ${output%.json}.log"
+python train/lamar/evaluate_zfloc.py --pcd_root "$PCD_ROOT" --zfloc_data "$ZFLOC_DATA" --map_dir "$MAP_DIR" \
+    --floorplan "$FLOORPLAN" --checkpoint_dir "$CHECKPOINT" --plan_size "$PLAN_SIZE" --scale_tol "$SCALE_TOL" --save_vis \
+    --output "$output" --seq_length $LENGTHS --seeds $SEEDS 2>&1 | tee "${output%.json}.log"
+log "done: $output, density maps and alignments in ${output%.json}_vis"

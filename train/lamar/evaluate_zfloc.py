@@ -14,12 +14,13 @@ import argparse
 import json
 import os
 import sys
+import time
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
 import torch
 from PIL import Image
-from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from evaluate_lamar import LAST_FRAMES, SEEDS, SUCCESS_M, align, summarize, write_results  # noqa: E402
@@ -91,6 +92,25 @@ def window_errors(alignment: dict, recon: dict, c2w: np.ndarray, poses_map: np.n
     return np.array(t_errs), np.array(r_errs)
 
 
+def window_summary(records: list) -> str:
+    """
+    One-line summary of the records of one window (all seeds) for the log.
+    Args:
+        records (list): of main, one per seed
+
+    Returns:
+        str: e.g. "SR 3/5, median 0.62 m, failed 0"
+    """
+    t_errs = sum((r["t_errs"] for r in records), [])
+    median = f"{np.median(t_errs):.2f} m" if t_errs else "-"
+    return f"SR {sum(r['success'] for r in records)}/{len(records)}, median {median}, failed {sum(r['failed'] for r in records)}"
+
+
+def elapsed(seconds: float) -> str:
+    """Seconds -> h:mm:ss."""
+    return str(timedelta(seconds=int(seconds)))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--pcd_root", help="directory of hge_<L>/<scene>/pcd/ (generate_pcd.py --evol_path <pcd_root>/hge_<L>)")
@@ -118,6 +138,7 @@ def main():
 
     plan_img, plan_params = load_floorplan(args.floorplan, args.plan_size)
     model = load_model(args.checkpoint_dir, args.dinov3_weights)
+    print(f"model: {args.checkpoint_dir}, scale band: {args.scale_tol if args.scale_tol >= 0 else 'off'}", flush=True)
     scale_tol = args.scale_tol if args.scale_tol >= 0 else None
     vis_dir = os.path.splitext(args.output)[0] + "_vis"
     if args.save_vis:
@@ -132,7 +153,7 @@ def main():
         if len(c2w) != len(poses_map):
             raise ValueError(f"{name}: {len(c2w)} kept frames, {len(poses_map)} rows in poses_map.npy")
         scenes[name] = (c2w, poses_map)
-        print(f"{name}: {len(c2w)} frames")
+        print(f"{name}: {len(c2w)} frames", flush=True)
 
     # Windows of all lengths and scenes; window_index (per length) seeds the alignment, whatever the shard
     jobs = []
@@ -143,16 +164,19 @@ def main():
                 jobs.append((seq_length, window_index, name, k))
                 window_index += 1
     jobs = jobs[args.shard::args.num_shards]
+    for seq_length in args.seq_length:
+        print(f"L={seq_length}: {sum(j[0] == seq_length for j in jobs)} windows", flush=True)
+    print(f"{len(jobs)} windows x {len(args.seeds)} seeds (shard {args.shard}/{args.num_shards})", flush=True)
 
     records = []
-    for seq_length, window_index, name, k in tqdm(jobs, desc=f"shard {args.shard}/{args.num_shards}"):
+    start = time.time()
+    for job_index, (seq_length, window_index, name, k) in enumerate(jobs):
+        window_start = time.time()
         window = slice(k * seq_length, (k + 1) * seq_length)
         c2w, poses_map = scenes[name][0][window], scenes[name][1][window]
         stem = window_stem(k, seq_length)
         path = os.path.join(args.pcd_root, f"hge_{seq_length}", name, "pcd", f"{stem}.npz")
         recon = load_zfloc_window(path, c2w) if os.path.exists(path) else None
-        if recon is None:
-            print(f"missing {path}: counted as a failure")
         for seed in args.seeds:  # the randomness of the alignment (query sampling, RANSAC), per window
             np.random.seed(seed * 1_000_000 + window_index)
             torch.manual_seed(seed * 1_000_000 + window_index)
@@ -170,6 +194,18 @@ def main():
                 t_errs, r_errs = window_errors(alignment, recon, c2w, poses_map, plan_params)
                 record.update(success=bool(np.all(t_errs < SUCCESS_M)), t_errs=t_errs.tolist(), r_errs=r_errs.tolist())
             records.append(record)
+
+        # Progress: this window, the SR@1m of its length so far, the time
+        done = time.time() - start
+        length_records = [r for r in records if r["L"] == seq_length]
+        status = window_summary(records[-len(args.seeds):]) if recon is not None else f"missing {path}: failure"
+        print(f"[{job_index + 1}/{len(jobs)}] L={seq_length} {name} {stem}: {status} | "
+              f"L={seq_length} SR so far {100 * np.mean([r['success'] for r in length_records]):.1f} % | "
+              f"{time.time() - window_start:.1f} s (elapsed {elapsed(done)}, "
+              f"ETA {elapsed(done / (job_index + 1) * (len(jobs) - job_index - 1))})", flush=True)
+        if job_index + 1 == len(jobs) or jobs[job_index + 1][0] != seq_length:
+            print(f"L={seq_length} finished: SR@1m {100 * np.mean([r['success'] for r in length_records]):.1f} % "
+                  f"({len(length_records) // len(args.seeds)} windows, mean over the seeds)", flush=True)
 
     if args.num_shards > 1:
         os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)

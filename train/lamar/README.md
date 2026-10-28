@@ -207,9 +207,12 @@ of `--ransac_thr` as `cv2.estimateAffinePartial2D`). `--scale_tol -1` uses `cv2.
 
 `shells/lamar/zfloc_eval.sh` (+`_hg`, one GPU is enough) runs it all: `create_lamar_hge.py` and `generate_pcd.py` of Z-FLoc
 (`ZFLOC_REPO`, default `~/oss/z-floc` on a branch with `tools/lamar_setup/`; conda environment `ZFLOC_ENV`, default
-`mapanything`; one GPU per length, the existing point clouds are skipped) into `ZFLOC_DATA` / `PCD_ROOT`
-(default `$DATA/zfloc_hge` / `$DATA/zfloc_pcd`), then `evaluate_zfloc.py` with one process per GPU into
-`OUT` (default `outputs/zfloc_eval_<checkpoint>_tol<SCALE_TOL>`); `LENGTHS`, `SEEDS`, `SCALE_TOL`:
+`mapanything`; one length after the other, the existing point clouds are skipped) into `ZFLOC_DATA` / `PCD_ROOT`
+(default `$DATA/zfloc_hge` / `$DATA/zfloc_pcd`), then `evaluate_zfloc.py` into `OUT` (default
+`outputs/zfloc_eval_<checkpoint>_tol<SCALE_TOL>`), all on one GPU; `LENGTHS`, `SEEDS`, `SCALE_TOL`. The job output shows
+the progress (time-stamped stages, the point clouds per length, then one line per window: its SR over the seeds,
+median error, the SR@1m of its length so far, elapsed time and ETA), also in `$PCD_ROOT/hge_<L>.log` and
+`$OUT/test_results.log`:
 
 ```bash
 qsub -v RTYPE=rt_HG,CHECKPOINT=outputs/lamar_lamar_rt_HF_<date>_<time> shells/lamar/zfloc_eval_hg.sh  # one GPU is enough
