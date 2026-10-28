@@ -25,6 +25,7 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from lamar import (METRES_PER_PIXEL, SEQ_LENGTHS, iter_test_windows, load_floorplan, load_session, load_split,  # noqa: E402
                    test_frames, train_frames, world_to_plan)
+from ransac import estimate_similarity_ransac, scale_band  # noqa: E402
 from reconstruction import load_mapanything, load_recon, reconstruct, save_recon  # noqa: E402
 from scenealigner.evaluation import compute_pose_error_analytic, get_camera_center_on_density_px  # noqa: E402
 from scenealigner.inference import (EVAL_IMG_RES, MODEL_REPO, estimate_correspondences, load_model,  # noqa: E402
@@ -36,16 +37,21 @@ LAST_FRAMES = 10  # cameras of a window that are evaluated
 SUCCESS_M = 1.0
 
 
-def align(recon: dict, plan_img: Image.Image, model, ransac_thr: float) -> dict | None:
+def align(recon: dict, plan_img: Image.Image, model, ransac_thr: float, plan_params: dict | None = None,
+          scale_tol: float | None = None, rng: np.random.Generator | None = None) -> dict | None:
     """
     Alignment of a reconstruction to the floorplan (scenealigner.inference.align_to_floorplan, with a 512 px density
     map as for C3 and the training data), or None when RANSAC finds no similarity transform (the window counts as a
-    failure, as in Z-FLoc).
+    failure, as in Z-FLoc). With scale_tol, the RANSAC hypotheses are restricted to the scale band of Z-FLoc
+    (ransac.estimate_similarity_ransac) instead of cv2.estimateAffinePartial2D.
     Args:
-        recon (dict): of reconstruction.reconstruct
+        recon (dict): "points_cam0", "conf" (or None), "est_gravity_cam" (of reconstruction.reconstruct)
         plan_img (Image.Image): square floorplan
         model: DINOv3 with the LoRA layers
         ransac_thr (float): RANSAC threshold, as a fraction of the floorplan resolution
+        plan_params (dict | None): of lamar.load_floorplan, needed with scale_tol
+        scale_tol (float | None): relative half width of the scale band, None for the unrestricted RANSAC
+        rng (np.random.Generator | None): minimal samples of the restricted RANSAC, needed with scale_tol
 
     Returns:
         dict | None: "proj_params", "density_img", "src_px", "dst_px", "M" (density map px -> floorplan px)
@@ -54,7 +60,12 @@ def align(recon: dict, plan_img: Image.Image, model, ransac_thr: float) -> dict 
                                                              density_size=EVAL_IMG_RES)
     density_img = render_density_map(points, proj_params)
     src_px, dst_px = estimate_correspondences(model, density_img, plan_img)
-    M, _ = cv2.estimateAffinePartial2D(src_px, dst_px, method=cv2.RANSAC, ransacReprojThreshold=ransac_thr * plan_img.size[0])
+    thr = ransac_thr * plan_img.size[0]
+    if scale_tol is None:
+        M, _ = cv2.estimateAffinePartial2D(src_px, dst_px, method=cv2.RANSAC, ransacReprojThreshold=thr)
+    else:
+        band = scale_band(proj_params["scale"], plan_params["scale"] / METRES_PER_PIXEL, scale_tol)
+        M = estimate_similarity_ransac(src_px, dst_px, thr, band, rng)
     if M is None:
         return None
     return {"proj_params": proj_params, "density_img": density_img, "src_px": src_px, "dst_px": dst_px, "M": M}
@@ -141,6 +152,8 @@ def main():
     parser.add_argument("--seq_length", type=int, nargs="+", default=list(SEQ_LENGTHS), help="window lengths")
     parser.add_argument("--seeds", type=int, nargs="+", default=list(SEEDS))
     parser.add_argument("--ransac_thr", type=float, default=0.04, help="RANSAC threshold, fraction of the floorplan resolution")
+    parser.add_argument("--scale_tol", type=float, default=None,
+                        help="restricts the RANSAC hypotheses to the scale band of Z-FLoc (e.g. 0.35); default: unrestricted")
     parser.add_argument("--zfloc_npz", default=None, help="Z-FLoc assets/metadata/hge.npz: evaluates exactly its frames")
     parser.add_argument("--mapanything_model", default="facebook/map-anything")
     parser.add_argument("--recon_cache", default=None, help="directory of cached reconstructions (read and written)")
@@ -198,7 +211,8 @@ def main():
             np.random.seed(seed * 1_000_000 + window_index)
             torch.manual_seed(seed * 1_000_000 + window_index)
             cv2.setRNGSeed(seed * 1_000_000 + window_index)
-            alignment = align(recon, plan_img, model, args.ransac_thr)
+            alignment = align(recon, plan_img, model, args.ransac_thr, plan_params, args.scale_tol,
+                              np.random.default_rng(seed * 1_000_000 + window_index))
             record = {"L": seq_length, "seed": seed, "success": False, "failed": alignment is None, "t_errs": [], "r_errs": []}
             if alignment is not None:
                 t_errs, r_errs = window_errors(alignment, recon, frames.c2w, plan_params)

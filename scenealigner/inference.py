@@ -65,6 +65,7 @@ def reconstruct_projection_geometry(points_cam0, points_conf, est_gravity_cam, c
                                     xz_slice_val=2.5, density_size=EVAL_IMG_RES, padding=0.1, eps=1e-8):
     """Rotates the points to the gravity-aligned ground frame, filters them and fits the top-down projection.
 
+    points_conf may be None (point clouds without confidence, e.g. of Z-FLoc): no confidence filter.
     Returns the projection parameters, the filtered points (N, 3) in the ground frame and their mask (S, H, W).
     """
     # Ground frame (Gram-Schmidt): +Y along gravity, +X close to the x-axis of camera 0
@@ -80,10 +81,13 @@ def reconstruct_projection_geometry(points_cam0, points_conf, est_gravity_cam, c
     z_target /= np.linalg.norm(z_target)
     R_rect = np.stack([x_target, y_target, z_target], axis=1).T  # camera 0 -> ground
     points = (points_cam0 @ R_rect.T).reshape(-1, 3)
-    conf = points_conf.reshape(-1)
 
-    # Confidence, height (+Y is down: top 5% and bottom 20% removed) and x/z percentile filters
-    mask = conf > np.percentile(conf, conf_threshold_percent)
+    # Confidence (skipped without points_conf), height (+Y is down: top 5% and bottom 20% removed) and x/z percentile filters
+    if points_conf is None:
+        mask = np.ones(len(points), dtype=bool)
+    else:
+        conf = points_conf.reshape(-1)
+        mask = conf > np.percentile(conf, conf_threshold_percent)
     ceil_cutoff, floor_cutoff = np.percentile(points[mask, 1], [5.0, 80.0])
     mask &= (points[:, 1] >= ceil_cutoff) & (points[:, 1] <= floor_cutoff)
     x_min, x_max = np.percentile(points[mask, 0], [xz_slice_val, 100 - xz_slice_val])
@@ -98,7 +102,7 @@ def reconstruct_projection_geometry(points_cam0, points_conf, est_gravity_cam, c
     proj_params = {"R_rect": R_rect, "min_x": min_x, "min_z": min_z, "scale": scale,
                    "cx": (density_size - width_m * scale) / 2, "cz": (density_size - height_m * scale) / 2,
                    "density_size": density_size}
-    return proj_params, points, mask.reshape(points_conf.shape)
+    return proj_params, points, mask.reshape(points_cam0.shape[:-1])
 
 
 def get_density_coordinates(points, proj_params):

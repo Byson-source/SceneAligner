@@ -182,6 +182,40 @@ holds the median position and angular errors. Baselines: `--checkpoint_dir pre-t
 `--checkpoint_dir jhcho99/SceneAligner` (the LoRA layers trained on C3). `--sessions val --seq_length 20 --seeds 42`
 evaluates the val session (indoor frames) for model selection.
 
+### On the point clouds of Z-FLoc
+
+```bash
+python train/lamar/evaluate_zfloc.py --pcd_root <dir of hge_<L>/> --zfloc_data <create_lamar_hge.py output> \
+    --map_dir <LAMAR_ROOT>/HGE/sessions/map --floorplan <LAMAR_ROOT>/hge.png --checkpoint_dir <run> [--scale_tol 0.35]
+```
+
+The inputs of the Z-FLoc experiment: the point clouds of its `tools/metadata_generation/generate_pcd.py`
+(`all_pcds`, MapAnything with the ground-truth poses, in the camera frame of the last frame of the window), its
+windows (`<pcd_root>/hge_<L>/<scene>/pcd/<(k+1)L-1:05d>-0.npz`) and its ground truth (`poses_map.npy` of
+`tools/lamar_setup/create_lamar_hge.py`, hge.png px x 0.055 m). There is no confidence (no confidence filter); the
+gravity is the ground truth of trajectories.txt. A missing point cloud counts as a failure.
+
+Scale band (an addition to upstream): the density map and the floorplan are metric, so the RANSAC hypotheses
+(2 correspondences) whose scale is outside the band of Z-FLoc, `c (1 -/+ scale_tol)` with `c` = floorplan px per
+metre / density px per metre and `scale_tol = 0.35` (`zfloc/matching/geometry.py::scale_bounds`), are rejected; the
+best one is refitted on its inliers with its scale clipped to the band (`ransac.py`, 2000 samples and the threshold
+of `--ransac_thr` as `cv2.estimateAffinePartial2D`). `--scale_tol -1` uses `cv2.estimateAffinePartial2D`;
+`evaluate_lamar.py --scale_tol 0.35` uses the band on its own reconstructions (default: unrestricted).
+
+`shells/lamar/zfloc_eval.sh` (+`_hf`/`_hg`) runs it all: `create_lamar_hge.py` and `generate_pcd.py` of Z-FLoc
+(`ZFLOC_REPO`, default `~/oss/z-floc` on a branch with `tools/lamar_setup/`; conda environment `ZFLOC_ENV`, default
+`mapanything`; one GPU per length, the existing point clouds are skipped) into `ZFLOC_DATA` / `PCD_ROOT`
+(default `$DATA/zfloc_hge` / `$DATA/zfloc_pcd`), then `evaluate_zfloc.py` with one process per GPU into
+`OUT` (default `outputs/zfloc_eval_<checkpoint>_tol<SCALE_TOL>`); `LENGTHS`, `SEEDS`, `SCALE_TOL`:
+
+```bash
+qsub -v RTYPE=rt_HF,CHECKPOINT=outputs/lamar_lamar_rt_HF_<date>_<time> shells/lamar/zfloc_eval_hf.sh
+qsub -v RTYPE=rt_HF,CHECKPOINT=outputs/lamar_lamar_rt_HF_<date>_<time>,SCALE_TOL=-1 shells/lamar/zfloc_eval_hf.sh  # unrestricted RANSAC
+```
+
+The test session 01-18 keeps 516 frames with the index shift of `create_lamar_hge.py` and 483 in the bundled
+`hge.npz` of Z-FLoc (an open issue of Z-FLoc): the windows here are those of the regenerated point clouds.
+
 ## ABCI jobs
 
 The jobs in `shells/` (PBS, conda environment `scenealigner`) run in `REPO`, by default `~/oss/SceneAligner`
