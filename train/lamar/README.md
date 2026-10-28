@@ -186,19 +186,37 @@ evaluates the val session (indoor frames) for model selection.
 
 ```bash
 python train/lamar/evaluate_zfloc.py --pcd_root <dir of hge_<L>/> --zfloc_data <create_lamar_hge.py output> \
-    --map_dir <LAMAR_ROOT>/HGE/sessions/map --floorplan <LAMAR_ROOT>/hge.png --checkpoint_dir <run> [--scale_tol 0.35]
+    --map_dir <LAMAR_ROOT>/HGE/sessions/map --floorplan <LAMAR_ROOT>/hge.png --checkpoint_dir <run> \
+    --zfloc_repo <z-floc> [--solver ransac --scale_tol 0.35]
 ```
 
 The inputs of the Z-FLoc experiment: the point clouds of its `tools/metadata_generation/generate_pcd.py`
 (`all_pcds`, MapAnything with the ground-truth poses, in the camera frame of the last frame of the window), its
 windows (`<pcd_root>/hge_<L>/<scene>/pcd/<(k+1)L-1:05d>-0.npz`) and its ground truth (`poses_map.npy` of
-`tools/lamar_setup/create_lamar_hge.py`, hge.png px x 0.055 m). There is no confidence (no confidence filter); the
-gravity is the ground truth of trajectories.txt. A missing point cloud counts as a failure.
+`tools/lamar_setup/create_lamar_hge.py`, hge.png px x 0.055 m). There is no confidence (no confidence filter).
+A missing point cloud (or, with `--solver zfloc`, a missing BEV) counts as a failure.
+
+`--solver zfloc` (default, `zfloc_solver.py`): only the correspondences come from SceneAligner, the rest is Z-FLoc.
+Every pair of the N correspondences gives a similarity BEV px -> hge.png px (nC2 hypotheses, no random sampling),
+which goes through the tail of the 2C solver of Z-FLoc (`solve_similarity_2circles`): scale band (`scale_bounds`),
+coarse score on the points of the BEV wall lines (`prune_ref_lines`, `_select_topk_point_candidates`, top
+`candidate_num` = 1000; in chunks of 200k hypotheses), alignment/penetration score with the scale penalty
+(`_filter_and_score_candidates`, `harsh_scale_penalty=False`), then `refine_with_lm` of the best one. The BEV, its
+occupancy mask, wall lines and gravity are those of Z-FLoc `extract_primitives.py`
+(`<pcd_root>/hge_<L>/<scene>/{bev_img,occupancy_mask,lines,gravity}/<stem>`); the density map is made with that
+(estimated) gravity, so a density px maps exactly to a BEV px (`density_to_bev`: inverse of the top-down projection,
+then 0.02 m/px around `W // 2, H // 2` as `make_bev_cuda_dual`), and the floorplan px of the correspondences are mapped
+back to hge.png px. The positions are evaluated as in `zfloc/offline.py` (`last_frame_pose_estimation` with the BEV
+gravity), the angles from the camera z-axes. Z-FLoc is imported from `--zfloc_repo` (unchanged; numba, scipy and pandas
+in the scenealigner environment). `--save_vis`: the density map and the overlay of Z-FLoc on hge.png (estimated last
+positions green, ground truth blue, correspondences orange: where the model sends the BEV end, line to the floorplan end).
+
+`--solver ransac`: the gravity is the ground truth of trajectories.txt and the correspondences are fitted by RANSAC.
 `--save_vis` (set by `zfloc_eval.sh`) saves, for the first seed, the density map of every window
 (`<output>_vis/<scene>_L<L>_<stem>_density.png`, also of the failed windows) and its alignment on the floorplan
 (`<output>_vis/<scene>_L<L>_<stem>.png`).
 
-Scale band (an addition to upstream): the density map and the floorplan are metric, so the RANSAC hypotheses
+Scale band (`--solver ransac`) (an addition to upstream): the density map and the floorplan are metric, so the RANSAC hypotheses
 (2 correspondences) whose scale is outside the band of Z-FLoc, `c (1 -/+ scale_tol)` with `c` = floorplan px per
 metre / density px per metre and `scale_tol = 0.35` (`zfloc/matching/geometry.py::scale_bounds`), are rejected; the
 best one is refitted on its inliers with its scale clipped to the band (`ransac.py`, 2000 samples and the threshold
@@ -208,15 +226,18 @@ of `--ransac_thr` as `cv2.estimateAffinePartial2D`). `--scale_tol -1` uses `cv2.
 `shells/lamar/zfloc_eval.sh` (+`_hg`, one GPU is enough) runs it all: `create_lamar_hge.py` and `generate_pcd.py` of Z-FLoc
 (`ZFLOC_REPO`, default `~/oss/z-floc` on a branch with `tools/lamar_setup/`; conda environment `ZFLOC_ENV`, default
 `mapanything`; one length after the other, the existing point clouds are skipped) into `ZFLOC_DATA` / `PCD_ROOT`
-(default `$DATA/zfloc_hge` / `$DATA/zfloc_pcd`), then `evaluate_zfloc.py` into `OUT` (default
-`outputs/zfloc_eval_<checkpoint>_tol<SCALE_TOL>`), all on one GPU; `LENGTHS`, `SEEDS`, `SCALE_TOL`. The job output shows
+(default `$DATA/zfloc_hge` / `$DATA/zfloc_pcd`), with `SOLVER=zfloc` (default) `extract_primitives.py` into the same
+directories (`--output_npz $PCD_ROOT/hge_<L>.npz` is a by-product; existing windows are skipped), then
+`evaluate_zfloc.py` into `OUT` (default `outputs/zfloc_eval_<checkpoint>_zfloc`, or `_ransac_tol<SCALE_TOL>` with
+`SOLVER=ransac`), all on one GPU; `LENGTHS`, `SEEDS`, `SOLVER`, `SCALE_TOL`. The job output shows
 the progress (time-stamped stages, the point clouds per length, then one line per window: its SR over the seeds,
 median error, the SR@1m of its length so far, elapsed time and ETA), also in `$PCD_ROOT/hge_<L>.log` and
 `$OUT/test_results.log`:
 
 ```bash
 qsub -v RTYPE=rt_HG,CHECKPOINT=outputs/lamar_lamar_rt_HF_<date>_<time> shells/lamar/zfloc_eval_hg.sh  # one GPU is enough
-qsub -v RTYPE=rt_HG,CHECKPOINT=outputs/lamar_lamar_rt_HF_<date>_<time>,SCALE_TOL=-1 shells/lamar/zfloc_eval_hg.sh  # unrestricted RANSAC
+qsub -v RTYPE=rt_HG,CHECKPOINT=outputs/lamar_lamar_rt_HF_<date>_<time>,SOLVER=ransac shells/lamar/zfloc_eval_hg.sh  # RANSAC in the band
+qsub -v RTYPE=rt_HG,CHECKPOINT=outputs/lamar_lamar_rt_HF_<date>_<time>,SOLVER=ransac,SCALE_TOL=-1 shells/lamar/zfloc_eval_hg.sh  # unrestricted RANSAC
 ```
 
 The test session 01-18 keeps 516 frames with the index shift of `create_lamar_hge.py` and 483 in the bundled

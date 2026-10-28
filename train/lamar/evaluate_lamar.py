@@ -37,6 +37,24 @@ LAST_FRAMES = 10  # cameras of a window that are evaluated
 SUCCESS_M = 1.0
 
 
+def correspondences(recon: dict, plan_img: Image.Image, model) -> dict:
+    """
+    Density map of a reconstruction (512 px, as for C3 and the training data) and the SceneAligner correspondences.
+    Args:
+        recon (dict): "points_cam0", "conf" (or None), "est_gravity_cam" (of reconstruction.reconstruct)
+        plan_img (Image.Image): square floorplan
+        model: DINOv3 with the LoRA layers
+
+    Returns:
+        dict: "proj_params", "density_img", "src_px" [N, 2] (density map px), "dst_px" [N, 2] (floorplan px)
+    """
+    proj_params, points, _ = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"],
+                                                             density_size=EVAL_IMG_RES)
+    density_img = render_density_map(points, proj_params)
+    src_px, dst_px = estimate_correspondences(model, density_img, plan_img)
+    return {"proj_params": proj_params, "density_img": density_img, "src_px": src_px, "dst_px": dst_px}
+
+
 def align(recon: dict, plan_img: Image.Image, model, ransac_thr: float, plan_params: dict | None = None,
           scale_tol: float | None = None, rng: np.random.Generator | None = None) -> dict:
     """
@@ -56,17 +74,15 @@ def align(recon: dict, plan_img: Image.Image, model, ransac_thr: float, plan_par
     Returns:
         dict: "proj_params", "density_img", "src_px", "dst_px", "M" (density map px -> floorplan px, or None)
     """
-    proj_params, points, _ = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"],
-                                                             density_size=EVAL_IMG_RES)
-    density_img = render_density_map(points, proj_params)
-    src_px, dst_px = estimate_correspondences(model, density_img, plan_img)
+    result = correspondences(recon, plan_img, model)
+    proj_params, src_px, dst_px = result["proj_params"], result["src_px"], result["dst_px"]
     thr = ransac_thr * plan_img.size[0]
     if scale_tol is None:
         M, _ = cv2.estimateAffinePartial2D(src_px, dst_px, method=cv2.RANSAC, ransacReprojThreshold=thr)
     else:
         band = scale_band(proj_params["scale"], plan_params["scale"] / METRES_PER_PIXEL, scale_tol)
         M = estimate_similarity_ransac(src_px, dst_px, thr, band, rng)
-    return {"proj_params": proj_params, "density_img": density_img, "src_px": src_px, "dst_px": dst_px, "M": M}
+    return {**result, "M": M}
 
 
 def window_errors(alignment: dict, recon: dict, c2w: np.ndarray, plan_params: dict) -> tuple[np.ndarray, np.ndarray]:
