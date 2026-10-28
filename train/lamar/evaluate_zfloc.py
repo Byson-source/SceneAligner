@@ -104,7 +104,7 @@ def main():
     parser.add_argument("--seeds", type=int, nargs="+", default=list(SEEDS))
     parser.add_argument("--ransac_thr", type=float, default=0.04, help="RANSAC threshold, fraction of the floorplan resolution")
     parser.add_argument("--scale_tol", type=float, default=SCALE_TOL, help="scale band of Z-FLoc; negative: unrestricted RANSAC")
-    parser.add_argument("--save_vis", action="store_true", help="saves the alignments of the first seed next to the output")
+    parser.add_argument("--save_vis", action="store_true", help="saves the density maps and alignments of the first seed next to the output")
     parser.add_argument("--output", default="outputs/zfloc_results.json")
     parser.add_argument("--shard", type=int, default=0, help="this process evaluates the windows shard, shard + num_shards, ...")
     parser.add_argument("--num_shards", type=int, default=1, help="processes (one per GPU); their records go to <output>.shard<i>.json")
@@ -158,13 +158,17 @@ def main():
             torch.manual_seed(seed * 1_000_000 + window_index)
             alignment = None if recon is None else align(recon, plan_img, model, args.ransac_thr, plan_params, scale_tol,
                                                          np.random.default_rng(seed * 1_000_000 + window_index))
-            record = {"L": seq_length, "seed": seed, "success": False, "failed": alignment is None, "t_errs": [], "r_errs": []}
-            if alignment is not None:
+            M = None if alignment is None else alignment["M"]
+            record = {"L": seq_length, "seed": seed, "success": False, "failed": M is None, "t_errs": [], "r_errs": []}
+            if args.save_vis and seed == args.seeds[0] and alignment is not None:  # the density map also of failed windows
+                vis_path = os.path.join(vis_dir, f"{name}_L{seq_length}_{stem}")
+                alignment["density_img"].save(f"{vis_path}_density.png")
+                if M is not None:
+                    image = draw_alignment(np.array(alignment["density_img"]), np.array(plan_img), M, alignment["src_px"])
+                    Image.fromarray(image).save(f"{vis_path}.png")
+            if M is not None:
                 t_errs, r_errs = window_errors(alignment, recon, c2w, poses_map, plan_params)
                 record.update(success=bool(np.all(t_errs < SUCCESS_M)), t_errs=t_errs.tolist(), r_errs=r_errs.tolist())
-                if args.save_vis and seed == args.seeds[0]:
-                    image = draw_alignment(np.array(alignment["density_img"]), np.array(plan_img), alignment["M"], alignment["src_px"])
-                    Image.fromarray(image).save(os.path.join(vis_dir, f"{name}_L{seq_length}_{stem}.png"))
             records.append(record)
 
     if args.num_shards > 1:

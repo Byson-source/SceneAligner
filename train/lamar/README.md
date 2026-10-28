@@ -194,6 +194,9 @@ The inputs of the Z-FLoc experiment: the point clouds of its `tools/metadata_gen
 windows (`<pcd_root>/hge_<L>/<scene>/pcd/<(k+1)L-1:05d>-0.npz`) and its ground truth (`poses_map.npy` of
 `tools/lamar_setup/create_lamar_hge.py`, hge.png px x 0.055 m). There is no confidence (no confidence filter); the
 gravity is the ground truth of trajectories.txt. A missing point cloud counts as a failure.
+`--save_vis` (set by `zfloc_eval.sh`) saves, for the first seed, the density map of every window
+(`<output>_vis/<scene>_L<L>_<stem>_density.png`, also of the failed windows) and its alignment on the floorplan
+(`<output>_vis/<scene>_L<L>_<stem>.png`).
 
 Scale band (an addition to upstream): the density map and the floorplan are metric, so the RANSAC hypotheses
 (2 correspondences) whose scale is outside the band of Z-FLoc, `c (1 -/+ scale_tol)` with `c` = floorplan px per

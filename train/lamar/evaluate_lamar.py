@@ -38,11 +38,11 @@ SUCCESS_M = 1.0
 
 
 def align(recon: dict, plan_img: Image.Image, model, ransac_thr: float, plan_params: dict | None = None,
-          scale_tol: float | None = None, rng: np.random.Generator | None = None) -> dict | None:
+          scale_tol: float | None = None, rng: np.random.Generator | None = None) -> dict:
     """
     Alignment of a reconstruction to the floorplan (scenealigner.inference.align_to_floorplan, with a 512 px density
-    map as for C3 and the training data), or None when RANSAC finds no similarity transform (the window counts as a
-    failure, as in Z-FLoc). With scale_tol, the RANSAC hypotheses are restricted to the scale band of Z-FLoc
+    map as for C3 and the training data); "M" is None when RANSAC finds no similarity transform (the window counts as
+    a failure, as in Z-FLoc). With scale_tol, the RANSAC hypotheses are restricted to the scale band of Z-FLoc
     (ransac.estimate_similarity_ransac) instead of cv2.estimateAffinePartial2D.
     Args:
         recon (dict): "points_cam0", "conf" (or None), "est_gravity_cam" (of reconstruction.reconstruct)
@@ -54,7 +54,7 @@ def align(recon: dict, plan_img: Image.Image, model, ransac_thr: float, plan_par
         rng (np.random.Generator | None): minimal samples of the restricted RANSAC, needed with scale_tol
 
     Returns:
-        dict | None: "proj_params", "density_img", "src_px", "dst_px", "M" (density map px -> floorplan px)
+        dict: "proj_params", "density_img", "src_px", "dst_px", "M" (density map px -> floorplan px, or None)
     """
     proj_params, points, _ = reconstruct_projection_geometry(recon["points_cam0"], recon["conf"], recon["est_gravity_cam"],
                                                              density_size=EVAL_IMG_RES)
@@ -66,8 +66,6 @@ def align(recon: dict, plan_img: Image.Image, model, ransac_thr: float, plan_par
     else:
         band = scale_band(proj_params["scale"], plan_params["scale"] / METRES_PER_PIXEL, scale_tol)
         M = estimate_similarity_ransac(src_px, dst_px, thr, band, rng)
-    if M is None:
-        return None
     return {"proj_params": proj_params, "density_img": density_img, "src_px": src_px, "dst_px": dst_px, "M": M}
 
 
@@ -213,8 +211,8 @@ def main():
             cv2.setRNGSeed(seed * 1_000_000 + window_index)
             alignment = align(recon, plan_img, model, args.ransac_thr, plan_params, args.scale_tol,
                               np.random.default_rng(seed * 1_000_000 + window_index))
-            record = {"L": seq_length, "seed": seed, "success": False, "failed": alignment is None, "t_errs": [], "r_errs": []}
-            if alignment is not None:
+            record = {"L": seq_length, "seed": seed, "success": False, "failed": alignment["M"] is None, "t_errs": [], "r_errs": []}
+            if alignment["M"] is not None:
                 t_errs, r_errs = window_errors(alignment, recon, frames.c2w, plan_params)
                 record.update(success=bool(np.all(t_errs < SUCCESS_M)), t_errs=t_errs.tolist(), r_errs=r_errs.tolist())
                 if args.save_vis and seed == args.seeds[0]:
