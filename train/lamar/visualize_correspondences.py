@@ -113,7 +113,7 @@ def main():
                         help="frames of a window (indices, -1: last); default: the 2 with most points on the density map")
     parser.add_argument("--conf", type=float, default=45, help="confidence threshold of the density map (percentile)")
     parser.add_argument("--xz", type=float, default=2.5, help="x/z slice of the density map")
-    parser.add_argument("--plan_source", default="recon", choices=["recon", "lidar"])
+    parser.add_argument("--plan_source", default="lidar", choices=["recon", "lidar"])
     parser.add_argument("--max_points", type=int, default=20000, help="as prepare_lamar.py")
     parser.add_argument("--max_wall_dist", type=float, default=MAX_WALL_DIST_M, help="as prepare_lamar.py")
     parser.add_argument("--seed", type=int, default=0)

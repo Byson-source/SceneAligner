@@ -941,7 +941,8 @@ def check(args: argparse.Namespace) -> None:
     plan_img, plan_params = load_floorplan(args.floorplan, args.plan_size)
     print(f"floorplan: {plan_params['full_size']} px, {plan_params['m_per_px']:.4f} m/px, resized to {plan_img.size}")
     residual = world_to_plan_full(TRAJECTORY_CORRESPONDENCES, plan_params["A"]) - FLOORPLAN_CORRESPONDENCES
-    print(f"affine fit residual: {np.linalg.norm(residual, axis=1).round(1)} px")
+    residual = np.linalg.norm(residual, axis=1)
+    print(f"affine fit residual: {residual.round(1)} px = {(residual * plan_params['m_per_px']).round(2)} m")
     sensors = load_sensors(Path(args.map_dir) / "sensors.txt") if (Path(args.map_dir) / "sensors.txt").exists() else {}
     print(f"map sensors.txt: {len(sensors)} camera-like sensors")
     for split, sessions in load_split(args.split).items():

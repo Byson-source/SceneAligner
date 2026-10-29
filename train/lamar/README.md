@@ -113,9 +113,12 @@ windows stay those of Z-FLoc (15 to 100 consecutive frames). The val set has 600
 window gives:
 - `mapanything/`: one density map of the reconstruction, for a random confidence threshold, x/z slice and gamma of
   `prepare_c3.py` (the threshold and slice pairs are tried in random order until one keeps the correspondences of
-  the frames that have at least 8 of them and they agree with a similarity transform). `--plan_source lidar` places
-  the correspondences with the LiDAR points instead of the reconstructed ones (as `prepare_s3d.py` does with the
-  ground-truth depth).
+  the frames that have at least 8 of them and they agree with a similarity transform). The floorplan
+  positions and the wall test of the correspondences are those of the LiDAR points of the pixels (`--plan_source
+  lidar`, default, as `prepare_s3d.py` does with the ground-truth depth; pixels without depth give none);
+  `--plan_source recon` takes the reconstructed points instead (density and floorplan pixels then agree exactly, and
+  points misplaced onto a wall by MapAnything are taken). The confidence percentiles are those of the pixels with a
+  point (masked pixels have confidence 0).
 - `lidar/`: one density map of the LiDAR points (gamma 0.5) at the resolution of the depth maps
   (`lamar.lidar_points`), seen from above in the gravity-aligned frame of the first camera, as
   `prepare_s3d.depth_sample`, if it has at least 10 correspondences; at most `--max_points` of them are kept, at random.

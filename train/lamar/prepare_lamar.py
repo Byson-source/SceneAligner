@@ -18,9 +18,10 @@ random among n to 8 n consecutive kept frames of a run (C3 reconstructs 50 to 15
 half of the windows, a quarter to a half of the frames replaced with frames of one or two other sessions within 2 m
 of its cameras. Every frame keeps a random fraction in [--min_keep 0.25, 1] of its pixels and LiDAR points.
 Correspondences, as prepare_s3d.py: the pixels of the density map of the 3D points whose positions lie on walls of
-the floorplan (within --max_wall_dist 0.2 m of a wall pixel of hge.png), and the floorplan pixels of these positions. With --plan_source recon (default) the positions are those
-of the reconstructed points placed with the ground-truth pose of the first camera; with --plan_source lidar,
-those of the LiDAR points (prepare_s3d.py takes the ground-truth depth). The CSV rows also hold the photo and the
+the floorplan (within --max_wall_dist 0.2 m of a wall pixel of hge.png), and the floorplan pixels of these positions. With --plan_source lidar (default) the positions are
+those of the LiDAR points of the pixels, as prepare_s3d.py takes the ground-truth depth (pixels without depth give no
+correspondences); with --plan_source recon, those of the reconstructed points (the density and floorplan pixels then
+agree exactly, and points misplaced by MapAnything onto a wall are taken). The CSV rows also hold the photo and the
 position of the last camera, for the visualizations of train.py; <epoch>/meta/windows.csv lists the frames of the
 windows (visualize_correspondences.py).
 """
@@ -167,7 +168,7 @@ def plan_correspondences(world: np.ndarray, pixels: np.ndarray, shape: tuple, pl
 
 def kept_ground_points(recon: dict, keep: np.ndarray | None) -> tuple:
     """
-    The points of the kept pixels in the gravity-aligned ground frame of camera 0, and their confidences, in float32
+    The points of the kept pixels with a point (MapAnything mask) in the gravity-aligned ground frame of camera 0, and their confidences, in float32
     (mixing float32 points with the float64 rotation, or indexing with an [S, H, W] mask, is several times slower).
     Args:
         recon (dict): of reconstruction.reconstruct
@@ -177,7 +178,8 @@ def kept_ground_points(recon: dict, keep: np.ndarray | None) -> tuple:
         tuple: R_rect [3, 3] (camera 0 -> ground), indices of the kept pixels [K], their points [K, 3] and confidences [K]
     """
     R_rect = ground_rotation(recon["est_gravity_cam"])  # +Y along gravity, as reconstruct_projection_geometry
-    idx = np.arange(recon["conf"].size) if keep is None else np.flatnonzero(keep)
+    valid = recon["mask"] if keep is None else recon["mask"] & keep  # masked pixels (conf 0) would lower the percentiles
+    idx = np.flatnonzero(valid)
     points = recon["points_cam0"].reshape(-1, 3)[idx] @ R_rect.T.astype(np.float32)
     return R_rect, idx, points, recon["conf"].reshape(-1)[idx]
 
@@ -501,7 +503,8 @@ def main():
     parser.add_argument("--mix_radius", type=float, default=MIX_RADIUS_M, help="other sessions: frames within this distance [m]")
     parser.add_argument("--min_keep", type=float, default=0.25, help="pixels kept per frame: a random fraction in [min_keep, 1]")
     parser.add_argument("--conf", type=int, nargs="+", default=list(CONF_THRESHOLDS), help="confidence thresholds (percentiles)")
-    parser.add_argument("--plan_source", default="recon", choices=["recon", "lidar"], help="3D points of the correspondences")
+    parser.add_argument("--plan_source", default="lidar", choices=["recon", "lidar"],
+                        help="3D points of the floorplan positions of the correspondences (lidar: as prepare_s3d.py)")
     parser.add_argument("--no_lidar_samples", action="store_true", help="no density maps of the LiDAR points")
     parser.add_argument("--scene_id", default="hge", choices=["hge", "cell"])
     parser.add_argument("--cell_m", type=float, default=20.0)

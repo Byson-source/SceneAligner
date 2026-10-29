@@ -25,6 +25,7 @@ MAP_DIR="${MAP_DIR:-$LAMAR_ROOT/HGE/sessions/map}"
 FLOORPLAN="${FLOORPLAN:-$LAMAR_ROOT/hge.png}"
 DATA="${DATA:-/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar}"
 PLAN_SIZE="${PLAN_SIZE:-1024}"
+PLAN_SOURCE="${PLAN_SOURCE:-lidar}"  # floorplan positions of the correspondences: lidar (as prepare_s3d.py) or recon
 
 
 python -c "import sys; print('python:', sys.executable, sys.version.split()[0])"
@@ -55,5 +56,5 @@ for split in $SPLITS; do
     windows=$([[ $split == train ]] && echo "$WINDOWS" || echo "$VAL_WINDOWS")
     spread=$([[ $split == test ]] && echo 1 || echo 8)  # test: consecutive frames (interval 1); others: n of n to 8 n frames
     python train/lamar/prepare_lamar.py --stage samples "${common[@]}" --sessions "$split" --workers "$NUM_WORKERS" \
-        --output "$output" --epochs "$epochs" --windows_per_epoch "$windows" --max_spread "$spread"
+        --output "$output" --epochs "$epochs" --windows_per_epoch "$windows" --max_spread "$spread" --plan_source "$PLAN_SOURCE"
 done

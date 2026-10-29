@@ -267,10 +267,13 @@ def test_projection_geometry_as_scenealigner():
     rng = np.random.default_rng(0)
     S, H, W = 4, 30, 40
     recon = {"points_cam0": rng.uniform(-5, 5, (S, H, W, 3)).astype(np.float32),
-             "conf": rng.uniform(1, 5, (S, H, W)).astype(np.float32), "est_gravity_cam": np.array([0.1, 0.9, 0.2])}
+             "conf": rng.uniform(1, 5, (S, H, W)).astype(np.float32), "est_gravity_cam": np.array([0.1, 0.9, 0.2]),
+             "mask": rng.random((S, H, W)) < 0.8}
+    recon["conf"][~recon["mask"]] = 0.0  # as reconstruction.reconstruct: masked pixels are not in the percentiles
     keep = rng.random((S, H, W)) < 0.7
     ground = prepare_lamar.kept_ground_points(recon, keep)
     params, points, mask = prepare_lamar.projection_geometry(ground, (S, H, W), 45, 2.5)
+    keep &= recon["mask"]
     ref_params, ref_points, ref_mask = reconstruct_projection_geometry(recon["points_cam0"][keep], recon["conf"][keep],
                                                                        recon["est_gravity_cam"], 45, 2.5, density_size=512)
     assert np.array_equal(mask[keep], ref_mask) and not mask[~keep].any()
