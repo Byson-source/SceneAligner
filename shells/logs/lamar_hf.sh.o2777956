@@ -1,0 +1,50 @@
+50 data folders of 886400 samples, 55400 steps
+100 epochs > 50 data folders: epoch e takes epoch_<e % 50> again
+resumed after epoch 56 (step 31024)
+val after epoch 57: loss 7.0709, feat 6.8542, acc 0.5015, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0063, topo 0.0082
+val after epoch 58: loss 7.0044, feat 6.7933, acc 0.5070, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0057, topo 0.0077
+val after epoch 59: loss 7.0038, feat 6.7846, acc 0.5058, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0060, topo 0.0087
+val after epoch 60: loss 6.9826, feat 6.7696, acc 0.5123, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0057, topo 0.0082
+val after epoch 61: loss 7.0658, feat 6.8379, acc 0.5035, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0061, topo 0.0091
+val after epoch 62: loss 6.9214, feat 6.7015, acc 0.5162, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0056, topo 0.0092
+val after epoch 63: loss 6.9830, feat 6.7676, acc 0.5116, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0057, topo 0.0082
+val after epoch 64: loss 6.9231, feat 6.7159, acc 0.5203, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0058, topo 0.0078
+val after epoch 65: loss 6.8931, feat 6.6801, acc 0.5215, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0058, topo 0.0084
+val after epoch 66: loss 6.9484, feat 6.7294, acc 0.5170, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0058, topo 0.0090
+val after epoch 67: loss 6.9201, feat 6.6991, acc 0.5148, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0061, topo 0.0087
+val after epoch 68: loss 6.9734, feat 6.7585, acc 0.5175, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0057, topo 0.0083
+val after epoch 69: loss 6.8928, feat 6.6706, acc 0.5171, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0064, topo 0.0084
+val after epoch 70: loss 7.0211, feat 6.8067, acc 0.5071, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0058, topo 0.0082
+val after epoch 71: loss 6.9408, feat 6.7188, acc 0.5176, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0063, topo 0.0086
+val after epoch 72: loss 7.0518, feat 6.8333, acc 0.5019, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0060, topo 0.0083
+val after epoch 73: loss 6.9747, feat 6.7551, acc 0.5184, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0062, topo 0.0084
+val after epoch 74: loss 6.9858, feat 6.7854, acc 0.5250, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0055, topo 0.0077
+val after epoch 75: loss 7.0151, feat 6.7911, acc 0.5124, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0063, topo 0.0088
+val after epoch 76: loss 6.9469, feat 6.7507, acc 0.5236, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0054, topo 0.0072
+val after epoch 77: loss 7.0167, feat 6.7981, acc 0.5259, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0057, topo 0.0089
+val after epoch 78: loss 6.8443, feat 6.6340, acc 0.5344, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0055, topo 0.0084
+val after epoch 79: loss 6.9797, feat 6.7646, acc 0.5224, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0058, topo 0.0087
+val after epoch 80: loss 6.9007, feat 6.6787, acc 0.5266, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0062, topo 0.0089
+val after epoch 81: loss 6.7968, feat 6.5853, acc 0.5425, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0013, geo 0.0058, topo 0.0086
+val after epoch 82: loss 6.9308, feat 6.7251, acc 0.5272, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0058, topo 0.0079
+val after epoch 83: loss 6.9413, feat 6.7334, acc 0.5288, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0063, topo 0.0076
+val after epoch 84: loss 6.9513, feat 6.7359, acc 0.5340, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0057, topo 0.0089
+val after epoch 85: loss 7.0785, feat 6.8627, acc 0.5014, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0059, topo 0.0080
+val after epoch 86: loss 6.7720, feat 6.5796, acc 0.5469, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0049, topo 0.0074
+val after epoch 87: loss 6.9759, feat 6.7696, acc 0.5291, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0060, topo 0.0072
+val after epoch 88: loss 6.8714, feat 6.6771, acc 0.5350, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0013, geo 0.0052, topo 0.0076
+val after epoch 89: loss 6.9801, feat 6.7504, acc 0.5183, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0062, topo 0.0093
+val after epoch 90: loss 6.7950, feat 6.5963, acc 0.5377, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0013, geo 0.0056, topo 0.0076
+val after epoch 91: loss 6.8382, feat 6.6343, acc 0.5359, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0059, topo 0.0075
+val after epoch 92: loss 6.7762, feat 6.5691, acc 0.5563, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0060, topo 0.0080
+val after epoch 93: loss 6.8414, feat 6.6203, acc 0.5385, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0055, topo 0.0096
+val after epoch 94: loss 6.8340, feat 6.6268, acc 0.5544, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0058, topo 0.0082
+val after epoch 95: loss 7.0698, feat 6.8296, acc 0.5020, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0016, geo 0.0065, topo 0.0095
+val after epoch 96: loss 6.7397, feat 6.5412, acc 0.5624, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0013, geo 0.0057, topo 0.0077
+val after epoch 97: loss 6.7483, feat 6.5413, acc 0.5519, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0013, geo 0.0058, topo 0.0083
+val after epoch 98: loss 6.8872, feat 6.6839, acc 0.5453, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0053, topo 0.0082
+val after epoch 99: loss 6.8063, feat 6.6180, acc 0.5448, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0013, geo 0.0054, topo 0.0067
+val after epoch 100: loss 6.6798, feat 6.4889, acc 0.5674, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0013, geo 0.0058, topo 0.0070
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33mscratch[0m at: [34mhttps://forge.coreweave.com/wandb/umemura-ayumi-t6-tohoku-university/scenealigner-lamar/runs/tlmsdv77[0m
+[1;34mwandb[0m: Find logs at: [1;35mwandb/run-20261027_194957-tlmsdv77/logs[0m

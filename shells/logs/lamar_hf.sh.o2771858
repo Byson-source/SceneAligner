@@ -1,0 +1,4 @@
+20 data folders of 354560 samples, 16620 steps
+val after epoch 1: loss 7.7757, feat 7.7757, acc 0.2177, chance 4.1523, w_regr 0.0000, w_struct 0.0000
+val after epoch 2: loss 7.5248, feat 7.5248, acc 0.2679, chance 4.1523, w_regr 0.0000, w_struct 0.0000
+val after epoch 3: loss 7.3096, feat 7.3096, acc 0.3034, chance 4.1523, w_regr 0.0000, w_struct 0.0000

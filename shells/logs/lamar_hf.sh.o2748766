@@ -1,0 +1,9 @@
+val after epoch 1: loss 9.8512, feat 9.8512, acc 0.0030, chance 2.4757, w_regr 0.0000, w_struct 0.0000
+val after epoch 2: loss 9.3304, feat 9.3304, acc 0.0023, chance 2.4757, w_regr 0.0000, w_struct 0.0000
+val after epoch 3: loss 8.8521, feat 8.6403, acc 0.0041, chance 2.4757, w_regr 0.5000, w_struct 0.0000, regr 0.0085
+val after epoch 4: loss 9.4135, feat 8.9689, acc 0.0007, chance 2.4757, w_regr 1.0000, w_struct 0.0000, regr 0.0089
+val after epoch 5: loss 9.2198, feat 8.7894, acc 0.0014, chance 2.4757, w_regr 1.0000, w_struct 0.5000, regr 0.0085, geo 0.0010, topo 0.0002
+val after epoch 6: loss 9.2894, feat 8.8670, acc 0.0007, chance 2.4757, w_regr 1.0000, w_struct 1.0000, regr 0.0082, geo 0.0010, topo 0.0001
+val after epoch 7: loss 9.5510, feat 9.1026, acc 0.0037, chance 2.4757, w_regr 1.0000, w_struct 1.0000, regr 0.0088, geo 0.0006, topo 0.0003
+val after epoch 8: loss 9.8405, feat 9.3840, acc 0.0003, chance 2.4757, w_regr 1.0000, w_struct 1.0000, regr 0.0089, geo 0.0008, topo 0.0005
+val after epoch 9: loss 9.8249, feat 9.3853, acc 0.0007, chance 2.4757, w_regr 1.0000, w_struct 1.0000, regr 0.0085, geo 0.0010, topo 0.0003

@@ -1,0 +1,59 @@
+wandb: [wandb.login()] Loaded credentials for https://api.forge.coreweave.com from /home/aag16494oe/.netrc.
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+[rank5]:[W1026 18:55:00.292896060 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 5]  using GPU 5 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.
+[rank7]:[W1026 18:55:00.292894145 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 7]  using GPU 7 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.
+[rank1]:[W1026 18:55:00.292897479 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 1]  using GPU 1 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+[rank6]:[W1026 18:55:00.371502922 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 6]  using GPU 6 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.
+[rank4]:[W1026 18:55:00.371752098 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 4]  using GPU 4 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+[rank2]:[W1026 18:55:00.377139835 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 2]  using GPU 2 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+[rank3]:[W1026 18:55:00.394319600 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 3]  using GPU 3 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.
+W1026 18:55:00.890000 532743 site-packages/torch/distributed/elastic/agent/server/api.py:719] Received 15 death signal, shutting down workers
+W1026 18:55:00.890000 532743 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 533051 closing signal SIGTERM
+W1026 18:55:00.890000 532743 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 533052 closing signal SIGTERM
+W1026 18:55:00.891000 532743 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 533053 closing signal SIGTERM
+W1026 18:55:00.891000 532743 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 533054 closing signal SIGTERM
+W1026 18:55:00.892000 532743 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 533055 closing signal SIGTERM
+W1026 18:55:00.892000 532743 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 533056 closing signal SIGTERM
+W1026 18:55:00.892000 532743 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 533057 closing signal SIGTERM
+W1026 18:55:00.892000 532743 site-packages/torch/distributed/elastic/multiprocessing/api.py:900] Sending process 533058 closing signal SIGTERM
+Traceback (most recent call last):
+  File "/home/aag16494oe/miniconda3/envs/scenealigner/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 355, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/run.py", line 892, in main
+    run(args)
+  File "/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/run.py", line 883, in run
+    elastic_launch(
+  File "/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 139, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/launcher/api.py", line 261, in launch_agent
+    result = agent.run()
+             ^^^^^^^^^^^
+  File "/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/elastic/metrics/api.py", line 138, in wrapper
+    result = f(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^
+  File "/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/elastic/agent/server/api.py", line 711, in run
+    result = self._invoke_run(role)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/elastic/agent/server/api.py", line 870, in _invoke_run
+    time.sleep(monitor_interval)
+  File "/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/elastic/multiprocessing/api.py", line 84, in _terminate_process_handler
+    raise SignalException(f"Process {os.getpid()} got signal: {sigval}", sigval=sigval)
+torch.distributed.elastic.multiprocessing.api.SignalException: Process 532743 got signal: 15

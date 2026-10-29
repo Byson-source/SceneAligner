@@ -1,0 +1,12 @@
+20 data folders of 354560 samples, 11080 steps
+val after epoch 1: loss 11.1794, feat 11.1794, acc 0.0024, chance 3.2103, w_regr 0.0000, w_struct 0.0000
+val after epoch 2: loss 9.9743, feat 9.9743, acc 0.0030, chance 3.2103, w_regr 0.0000, w_struct 0.0000
+val after epoch 3: loss 9.8214, feat 9.5892, acc 0.0035, chance 3.2103, w_regr 0.5000, w_struct 0.0000, regr 0.0093
+val after epoch 4: loss 9.8954, feat 9.4368, acc 0.0041, chance 3.2103, w_regr 1.0000, w_struct 0.0000, regr 0.0092
+val after epoch 5: loss 9.5088, feat 9.0560, acc 0.0074, chance 3.2103, w_regr 1.0000, w_struct 0.5000, regr 0.0085, geo 0.0032, topo 0.0019
+val after epoch 6: loss 9.2021, feat 8.7514, acc 0.0223, chance 3.2103, w_regr 1.0000, w_struct 1.0000, regr 0.0081, geo 0.0032, topo 0.0013
+val after epoch 7: loss 9.2829, feat 8.8364, acc 0.0167, chance 3.2103, w_regr 1.0000, w_struct 1.0000, regr 0.0080, geo 0.0029, topo 0.0018
+val after epoch 8: loss 9.5868, feat 9.1175, acc 0.0035, chance 3.2103, w_regr 1.0000, w_struct 1.0000, regr 0.0085, geo 0.0034, topo 0.0013
+val after epoch 9: loss 9.8635, feat 9.3767, acc 0.0016, chance 3.2103, w_regr 1.0000, w_struct 1.0000, regr 0.0087, geo 0.0031, topo 0.0022
+val after epoch 10: loss 9.7219, feat 9.2488, acc 0.0033, chance 3.2103, w_regr 1.0000, w_struct 1.0000, regr 0.0085, geo 0.0033, topo 0.0013
+val after epoch 11: loss 9.7754, feat 9.3018, acc 0.0110, chance 3.2103, w_regr 1.0000, w_struct 1.0000, regr 0.0085, geo 0.0034, topo 0.0016
