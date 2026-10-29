@@ -13,7 +13,7 @@ The kept frames of a session are reconstructed once, in chunks of at most --chun
 points of every frame are cached in its camera frame, and a window takes those of its frames, placed with the
 ground-truth poses relative to its first frame (reconstruction.window_from_cache).
 Windows (--windows_per_epoch per epoch, --epochs sets in <data>/epoch_<e>, every one a different combination of
-frames; lamar.sample_epoch_windows): a session drawn proportionally to its kept frames, 15 to 500 frames drawn at
+frames; lamar.sample_epoch_windows): a session drawn proportionally to its kept frames, 5 to 500 frames drawn at
 random among n to 8 n consecutive kept frames of a run (C3 reconstructs 50 to 150 random photos of a scene); in
 half of the windows, a quarter to a half of the frames replaced with frames of one or two other sessions within 2 m
 of its cameras. Every frame keeps a random fraction in [--min_keep 0.25, 1] of its pixels and LiDAR points.
