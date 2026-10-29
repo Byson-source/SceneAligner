@@ -9,7 +9,7 @@
 # Evaluation on LaMAR HGE (Z-FLoc protocol): the val session (L = 20, seed 42), then the test sessions (all L, seeds 42-46).
 # NUM_GPUS: processes (default: the GPUs of the node).
 # Called by evaluate_hf.sh / evaluate_hg.sh with DATA, RTYPE and CHECKPOINT (a run directory, "pre-trained" or
-# jhcho99/SceneAligner). ZFLOC_NPZ (optional): Z-FLoc assets/metadata/hge.npz, to evaluate exactly its test frames.
+# jhcho99/SceneAligner; default outputs/scratch). ZFLOC_NPZ (optional): Z-FLoc assets/metadata/hge.npz, to evaluate exactly its test frames.
 
 source /etc/profile.d/modules.sh
 export PATH=${HOME}/miniconda3/bin:$PATH && source activate scenealigner
@@ -24,7 +24,7 @@ MAP_DIR="${MAP_DIR:-$LAMAR_ROOT/HGE/sessions/map}"
 FLOORPLAN="${FLOORPLAN:-$LAMAR_ROOT/hge.png}"
 DATA="${DATA:-/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar}"
 RTYPE="${RTYPE:-rt_HG}"
-CHECKPOINT="${CHECKPOINT:-outputs/lamar_$(basename "$DATA")_${RTYPE}}"
+CHECKPOINT="${CHECKPOINT:-outputs/scratch}"
 PLAN_SIZE="${PLAN_SIZE:-1024}"
 OUT="${OUT:-outputs/eval_$(basename "$CHECKPOINT")}"
 ZFLOC_NPZ_ARG=()

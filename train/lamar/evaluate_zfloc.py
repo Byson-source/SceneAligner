@@ -2,11 +2,14 @@
 (tools/metadata_generation/generate_pcd.py: MapAnything with the ground-truth intrinsics and poses, one window of L
 kept frames per file, points in the camera frame of its last frame), its windows and its metric (the positions of the
 last 10 frames all within 1 m of poses_map.npy, 0.055 m/px, seeds 42 to 46, a window without a model fails).
-The gravity is the ground truth (LaMAR world z-up); the RANSAC hypotheses are restricted to the scale band of Z-FLoc
-(--scale_tol, negative for cv2.estimateAffinePartial2D as in evaluate_lamar.py).
+--solver zfloc (default): only the correspondences come from SceneAligner; all their pairs (nC2) are similarity
+hypotheses for the back end of Z-FLoc (scale band, coarse score on the BEV wall lines, alignment/penetration score, LM;
+zfloc_solver.py) with the BEV of Z-FLoc extract_primitives.py, whose gravity is also used for the density map.
+--solver ransac: the gravity is the ground truth (LaMAR world z-up) and the RANSAC hypotheses are restricted to the
+scale band of Z-FLoc (--scale_tol, negative for cv2.estimateAffinePartial2D as in evaluate_lamar.py).
 
     python train/lamar/evaluate_zfloc.py --pcd_root <dir of hge_<L>/> --zfloc_data <create_lamar_hge.py output> \\
-        --map_dir <HGE/sessions/map> --floorplan hge.png --checkpoint_dir <run>
+        --map_dir <HGE/sessions/map> --floorplan hge.png --checkpoint_dir <run> --zfloc_repo <z-floc>
     # on several GPUs: one process per GPU with --shard i --num_shards n (shells/lamar/zfloc_eval.sh), then
     python train/lamar/evaluate_zfloc.py --merge --output <json> [--seq_length ...] [--seeds ...]
 """
@@ -18,12 +21,14 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from evaluate_lamar import LAST_FRAMES, SEEDS, SUCCESS_M, align, summarize, write_results  # noqa: E402
+import zfloc_solver  # noqa: E402
+from evaluate_lamar import LAST_FRAMES, SEEDS, SUCCESS_M, align, correspondences, summarize, write_results  # noqa: E402
 from lamar import (HGE_INDEX_SHIFT, METRES_PER_PIXEL, SEQ_LENGTHS, gravity_cam0, kept_indices, load_floorplan,  # noqa: E402
                    load_split, load_trajectory)
 from ransac import SCALE_TOL  # noqa: E402
@@ -92,6 +97,38 @@ def window_errors(alignment: dict, recon: dict, c2w: np.ndarray, poses_map: np.n
     return np.array(t_errs), np.array(r_errs)
 
 
+def localize_zfloc(recon: dict, bev: dict, plan_img: Image.Image, model, refs: dict, param: dict, plan_params: dict,
+                   c2w: np.ndarray, poses_map: np.ndarray) -> tuple[dict, dict]:
+    """
+    One window and seed with --solver zfloc: SceneAligner correspondences, then the back end of Z-FLoc.
+    Args:
+        recon (dict): of load_zfloc_window, "est_gravity_cam" replaced by the gravity of the BEV
+        bev (dict): of zfloc_solver.load_bev
+        plan_img (Image.Image): resized floorplan given to SceneAligner
+        model: DINOv3 with the LoRA layers
+        refs (dict): of zfloc_solver.setup_refs
+        param (dict): match_param of Z-FLoc
+        plan_params (dict): of lamar.load_floorplan
+        c2w (np.ndarray): tensor with shape [L, 4, 4], ground-truth camera-to-world poses of the window
+        poses_map (np.ndarray): tensor with shape [L, 2], ground-truth positions, hge.png px
+
+    Returns:
+        tuple[dict, dict]: record fields ("success", "failed", "t_errs", "r_errs", "n_corr") and the visualizations
+            ("density" PIL image, "overlay" BGR array or None)
+    """
+    result = correspondences(recon, plan_img, model)
+    src = zfloc_solver.density_to_bev(result["src_px"], result["proj_params"], bev["gravity"], bev["bev_img"].shape)
+    dst = zfloc_solver.plan_to_full(result["dst_px"], plan_params)
+    model_bev = zfloc_solver.localize(src, dst, bev, refs, param)
+    record = {"success": False, "failed": model_bev is None, "t_errs": [], "r_errs": [], "n_corr": len(src)}
+    vis = {"density": result["density_img"], "overlay": None}
+    if model_bev is not None:
+        t_errs, r_errs, est = zfloc_solver.window_errors(model_bev, bev, c2w, poses_map, plan_params, param, LAST_FRAMES)
+        record.update(success=bool(np.all(t_errs < SUCCESS_M)), t_errs=t_errs.tolist(), r_errs=r_errs.tolist())
+        vis["overlay"] = zfloc_solver.overlay(bev, refs, model_bev, est, poses_map[-LAST_FRAMES:], src, dst)
+    return record, vis
+
+
 def window_summary(records: list) -> str:
     """
     One-line summary of the records of one window (all seeds) for the log.
@@ -99,11 +136,13 @@ def window_summary(records: list) -> str:
         records (list): of main, one per seed
 
     Returns:
-        str: e.g. "SR 3/5, median 0.62 m, failed 0"
+        str: e.g. "SR 3/5, median 0.62 m, failed 0" (", 412 correspondences" with --solver zfloc)
     """
     t_errs = sum((r["t_errs"] for r in records), [])
     median = f"{np.median(t_errs):.2f} m" if t_errs else "-"
-    return f"SR {sum(r['success'] for r in records)}/{len(records)}, median {median}, failed {sum(r['failed'] for r in records)}"
+    n_corr = [r["n_corr"] for r in records if "n_corr" in r]
+    corr = f", {np.mean(n_corr):.0f} correspondences" if n_corr else ""
+    return f"SR {sum(r['success'] for r in records)}/{len(records)}, median {median}, failed {sum(r['failed'] for r in records)}{corr}"
 
 
 def elapsed(seconds: float) -> str:
@@ -122,6 +161,9 @@ def main():
     parser.add_argument("--plan_size", type=int, default=1024, help="resolution of the floorplan (density maps: 512)")
     parser.add_argument("--seq_length", type=int, nargs="+", default=list(SEQ_LENGTHS), help="window lengths")
     parser.add_argument("--seeds", type=int, nargs="+", default=list(SEEDS))
+    parser.add_argument("--solver", choices=["zfloc", "ransac"], default="zfloc",
+                        help="zfloc: nC2 hypotheses + scoring and LM of Z-FLoc; ransac: RANSAC of the correspondences")
+    parser.add_argument("--zfloc_repo", help="Z-FLoc repository (--solver zfloc)")
     parser.add_argument("--ransac_thr", type=float, default=0.04, help="RANSAC threshold, fraction of the floorplan resolution")
     parser.add_argument("--scale_tol", type=float, default=SCALE_TOL, help="scale band of Z-FLoc; negative: unrestricted RANSAC")
     parser.add_argument("--save_vis", action="store_true", help="saves the density maps and alignments of the first seed next to the output")
@@ -138,7 +180,12 @@ def main():
 
     plan_img, plan_params = load_floorplan(args.floorplan, args.plan_size)
     model = load_model(args.checkpoint_dir, args.dinov3_weights)
-    print(f"model: {args.checkpoint_dir}, scale band: {args.scale_tol if args.scale_tol >= 0 else 'off'}", flush=True)
+    if args.solver == "zfloc":
+        zfloc_solver.import_zfloc(args.zfloc_repo)
+        param, refs = zfloc_solver.match_param(), zfloc_solver.setup_refs(args.floorplan)
+        print(f"model: {args.checkpoint_dir}, solver: nC2 hypotheses + Z-FLoc scoring and LM", flush=True)
+    else:
+        print(f"model: {args.checkpoint_dir}, solver: RANSAC, scale band: {args.scale_tol if args.scale_tol >= 0 else 'off'}", flush=True)
     scale_tol = args.scale_tol if args.scale_tol >= 0 else None
     vis_dir = os.path.splitext(args.output)[0] + "_vis"
     if args.save_vis:
@@ -177,9 +224,24 @@ def main():
         stem = window_stem(k, seq_length)
         path = os.path.join(args.pcd_root, f"hge_{seq_length}", name, "pcd", f"{stem}.npz")
         recon = load_zfloc_window(path, c2w) if os.path.exists(path) else None
+        if args.solver == "zfloc":  # the BEV of Z-FLoc; the density map with its gravity
+            bev = zfloc_solver.load_bev(os.path.dirname(os.path.dirname(path)), stem)
+            recon = None if recon is None or bev is None else {**recon, "est_gravity_cam": bev["gravity"]}
         for seed in args.seeds:  # the randomness of the alignment (query sampling, RANSAC), per window
             np.random.seed(seed * 1_000_000 + window_index)
             torch.manual_seed(seed * 1_000_000 + window_index)
+            if args.solver == "zfloc":
+                record = {"L": seq_length, "seed": seed, "success": False, "failed": True, "t_errs": [], "r_errs": []}
+                if recon is not None:
+                    fields, vis = localize_zfloc(recon, bev, plan_img, model, refs, param, plan_params, c2w, poses_map)
+                    record.update(fields)
+                    if args.save_vis and seed == args.seeds[0]:
+                        vis_path = os.path.join(vis_dir, f"{name}_L{seq_length}_{stem}")
+                        vis["density"].save(f"{vis_path}_density.png")
+                        if vis["overlay"] is not None:
+                            cv2.imwrite(f"{vis_path}.png", vis["overlay"])
+                records.append(record)
+                continue
             alignment = None if recon is None else align(recon, plan_img, model, args.ransac_thr, plan_params, scale_tol,
                                                          np.random.default_rng(seed * 1_000_000 + window_index))
             M = None if alignment is None else alignment["M"]
@@ -198,7 +260,7 @@ def main():
         # Progress: this window, the SR@1m of its length so far, the time
         done = time.time() - start
         length_records = [r for r in records if r["L"] == seq_length]
-        status = window_summary(records[-len(args.seeds):]) if recon is not None else f"missing {path}: failure"
+        status = window_summary(records[-len(args.seeds):]) if recon is not None else f"missing {path} or its BEV: failure"
         print(f"[{job_index + 1}/{len(jobs)}] L={seq_length} {name} {stem}: {status} | "
               f"L={seq_length} SR so far {100 * np.mean([r['success'] for r in length_records]):.1f} % | "
               f"{time.time() - window_start:.1f} s (elapsed {elapsed(done)}, "
