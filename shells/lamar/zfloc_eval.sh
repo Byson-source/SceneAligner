@@ -43,6 +43,10 @@ SCALE_TOL="${SCALE_TOL:-0.35}"
 SOLVER="${SOLVER:-zfloc}"
 if [ "$SOLVER" = zfloc ]; then suffix=zfloc; else suffix="ransac_tol${SCALE_TOL}"; fi
 OUT="${OUT:-$REPO/outputs/zfloc_eval_$(basename "$CHECKPOINT")_${suffix}}"
+for v in $LENGTHS $SEEDS; do  # space separated; a comma only separates the variables of qsub -v
+    [[ "$v" =~ ^[0-9]+$ ]] || { echo "LENGTHS='$LENGTHS' SEEDS='$SEEDS': space-separated integers expected" \
+        "(run directly: LENGTHS=100 SEEDS=42 bash $0; commas only with qsub -v)" >&2; exit 1; }
+done
 mkdir -p "$OUT" "$PCD_ROOT"
 export PYTHONUNBUFFERED=1  # prints of python right away in the job output
 log() { echo "[$(date '+%F %T')] $*"; }
