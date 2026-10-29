@@ -297,6 +297,9 @@ def main():
                           collate_fn=partial(collate, resolutions=args.resolutions)), sampler
 
     total_steps = sum(len(epoch_loader(epoch)[0]) for epoch in range(args.epochs))
+    # Steps of the loss ramps (compute_loss): those of the run being resumed, so that more --epochs on --resume do not
+    # restart them (a state.pt without them is taken as that of a finished run: its last step)
+    ramp_steps = state.get("total_steps", state["step"]) if state else total_steps
     if rank == 0:
         print(f"{len(datasets)} data folders of {sum(len(d) for d in datasets)} samples, {total_steps} steps")
         if args.epochs > len(datasets):
@@ -340,7 +343,7 @@ def main():
             sampler.set_epoch(epoch)
         for batch in tqdm(loader, desc=f"epoch {epoch + 1}/{args.epochs}", disable=rank != 0):
             optimizer.zero_grad()
-            loss, losses, pred = compute_loss(extractor, batch, step, total_steps, args.negatives, args.false_negative_px,
+            loss, losses, pred = compute_loss(extractor, batch, step, ramp_steps, args.negatives, args.false_negative_px,
                                               args.false_negatives)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -359,10 +362,11 @@ def main():
                     wandb.log({"sample": wandb.Image(image, caption=f"step {step}: {batch['scene_id'][0]}")}, step=step)
         if rank == 0:
             model.save_pretrained(args.output)
-            torch.save({"epoch": epoch, "step": step, "optimizer": optimizer.state_dict(),
-                        "wandb_id": wandb.run.id if wandb else None}, state_path)
+            torch.save({"epoch": epoch, "step": step, "optimizer": optimizer.state_dict(), "total_steps": ramp_steps,
+                        "wandb_id": wandb.run.id if wandb else None}, state_path + ".tmp")
+            os.replace(state_path + ".tmp", state_path)  # complete even if the job is killed (walltime) while saving
         if val_dataset is not None:
-            val, images = validate(model, extractor, val_dataset, args, step, total_steps)
+            val, images = validate(model, extractor, val_dataset, args, step, ramp_steps)
             if rank == 0:
                 val_path = os.path.join(args.output, "val_log.csv")
                 new = not os.path.exists(val_path)

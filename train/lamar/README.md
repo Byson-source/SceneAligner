@@ -279,7 +279,9 @@ frames (`--max_spread 1`), in `$DATA/test/epoch_000` (`SPLITS`, default `train t
 `VAL_DATA=$DATA/val`). `bash shells/lamar/prepare_train_hf.sh` (on the login node) submits MapAnything (one job,
 `STAGE=recon`), the windows in `NUM_PARTS` (4) jobs of one node (`STAGE=samples`, the job `PART` makes the epochs
 `PART`, `PART + NUM_PARTS`, ...: the same data as one job) and the training on `TRAIN_NODES` (4) nodes, each after
-the previous jobs succeeded. `train.py` takes the windows of
+the previous jobs succeeded; `TRAIN_JOBS` training jobs resume the run one after the other (`afterany`: also after
+the walltime), and `PREPARE=0 RESUME=<run> TRAIN_EPOCHS=500` extends an existing run (the loss ramps keep the steps of
+the run being resumed, saved in `state.pt`). `train.py` takes the windows of
 `<data>/epoch_<e>` at epoch e (in turn if there are fewer sets than epochs). When they exist, `train.sh` passes them to
 `train.py --val_data`, which computes the losses, `acc` and `chance` on them after every epoch (the same
 augmentations at every epoch, seeded by `--seed`) and logs them to wandb (`val/...`) and `<run>/val_log.csv`.
