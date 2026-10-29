@@ -229,7 +229,7 @@ of `--ransac_thr` as `cv2.estimateAffinePartial2D`). `--scale_tol -1` uses `cv2.
 (default `$DATA/zfloc_hge` / `$DATA/zfloc_pcd`), with `SOLVER=zfloc` (default) `extract_primitives.py` into the same
 directories (`--output_npz $PCD_ROOT/hge_<L>.npz` is a by-product; existing windows are skipped), then
 `evaluate_zfloc.py` into `OUT` (default `outputs/zfloc_eval_<checkpoint>_zfloc`, or `_ransac_tol<SCALE_TOL>` with
-`SOLVER=ransac`), all on one GPU; `LENGTHS`, `SEEDS`, `SOLVER`, `SCALE_TOL`. The job output shows
+`SOLVER=ransac`), all on one GPU; `LENGTHS`, `SEEDS`, `SOLVER`, `SCALE_TOL`. `CHECKPOINT` defaults to `outputs/scratch` (also in `evaluate.sh`). The job output shows
 the progress (time-stamped stages, the point clouds per length, then one line per window: its SR over the seeds,
 median error, the SR@1m of its length so far, elapsed time and ETA), also in `$PCD_ROOT/hge_<L>.log` and
 `$OUT/test_results.log`:

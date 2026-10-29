@@ -17,7 +17,7 @@
 #      SOLVER=ransac: RANSAC restricted to the scale band of Z-FLoc, ground-truth gravity
 # On one GPU. The progress goes to the job output and to $PCD_ROOT/hge_<L>.log and $OUT/test_results.log.
 # Called by zfloc_eval_hg.sh with DATA, RTYPE and CHECKPOINT (a run directory trained on HGE,
-# "pre-trained" or jhcho99/SceneAligner). SCALE_TOL (SOLVER=ransac): half width of the scale band (default 0.35 of
+# "pre-trained" or jhcho99/SceneAligner; default outputs/scratch). SCALE_TOL (SOLVER=ransac): half width of the scale band (default 0.35 of
 # Z-FLoc, -1: unrestricted). SOLVER=zfloc imports Z-FLoc ($ZFLOC_REPO) in the scenealigner environment: numba, scipy, pandas.
 
 source /etc/profile.d/modules.sh
@@ -33,7 +33,7 @@ MAP_DIR="${MAP_DIR:-$LAMAR_ROOT/HGE/sessions/map}"
 FLOORPLAN="${FLOORPLAN:-$LAMAR_ROOT/hge.png}"
 DATA="${DATA:-/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar}"
 RTYPE="${RTYPE:-rt_HG}"
-CHECKPOINT="${CHECKPOINT:-outputs/lamar_$(basename "$DATA")_${RTYPE}}"
+CHECKPOINT="${CHECKPOINT:-outputs/scratch}"
 PLAN_SIZE="${PLAN_SIZE:-1024}"
 ZFLOC_DATA="${ZFLOC_DATA:-$DATA/zfloc_hge}"  # output of create_lamar_hge.py
 PCD_ROOT="${PCD_ROOT:-$DATA/zfloc_pcd}"      # point clouds of generate_pcd.py, hge_<L>/<scene>/pcd/<stem>.npz
