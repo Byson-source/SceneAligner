@@ -13,6 +13,7 @@
 # the floorplan, 1024 here). Every job writes a new run (outputs/<...>_<date>_<time>);
 # qsub -v RTYPE=rt_HG,RESUME=<run> continues <run> after its last completed epoch (<run>/state.pt).
 # One process per GPU of the node (torchrun, DistributedDataParallel; rt_HF: 8, rt_HG: 1), a batch of 4 per GPU.
+# Several rt_HF nodes (a batch of 4 x 8 x nodes, the same lr): qsub -l select=4 -v RTYPE=rt_HF shells/train/lamar_hf.sh
 # Fine-tuning of trained LoRA layers instead of new ones: qsub -v RTYPE=rt_HF,INIT=jhcho99/SceneAligner,LR=1e-5,EPOCHS=5 shells/train/lamar_hf.sh
 
 source /etc/profile.d/modules.sh
@@ -25,7 +26,11 @@ set -euo pipefail
 
 DATA="${DATA:-/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar}"
 RTYPE="${RTYPE:-rt_HG}"
-RUN="${RUN:-${RESUME:-outputs/lamar_$(basename "$DATA")_${RTYPE}_$(date +%Y%m%d_%H%M%S)}}"  # a new run per job
+NODES=$(sort -u "${PBS_NODEFILE:-/dev/null}" | wc -l)  # qsub -l select=4: 4 nodes (32 GPUs of rt_HF, a batch of 128)
+NODES=$(( NODES > 1 ? NODES : 1 ))
+nodes_tag=""
+if (( NODES > 1 )); then nodes_tag="x$NODES"; fi
+RUN="${RUN:-${RESUME:-outputs/lamar_$(basename "$DATA")_${RTYPE}${nodes_tag}_$(date +%Y%m%d_%H%M%S)}}"  # a new run per job
 resume_args=()
 if [[ -n "${RESUME:-}" ]]; then resume_args=(--resume); fi  # qsub -v RTYPE=rt_HG,RESUME=<run>: continues that run
 EPOCHS="${EPOCHS:-20}"
@@ -42,7 +47,19 @@ if [[ -n "${INIT:-}" ]]; then init_args=(--init "$INIT"); fi  # LoRA layers to s
 val_args=()
 if compgen -G "$VAL_DATA/epoch_*/lamar_mapanything.csv" > /dev/null; then val_args=(--val_data "$VAL_DATA"); fi
 
-torchrun --standalone --nproc_per_node="$NUM_GPUS" train.py --data "$DATA" --output "$RUN" --epochs "$EPOCHS" --lr "$LR" \
+train=(train.py --data "$DATA" --output "$RUN" --epochs "$EPOCHS" --lr "$LR" \
     --resolutions 1024 --min_points 1000 \
     --negatives "$NEGATIVES" --plan_grid "$PLAN_GRID" --false_negative_px "$FALSE_NEGATIVE_PX" --false_negatives "$FALSE_NEGATIVES" "${init_args[@]}" "${val_args[@]}" "${resume_args[@]}" \
-    --wandb_project "$WANDB_PROJECT" --wandb_name "$(basename "$RUN")"
+    --wandb_project "$WANDB_PROJECT" --wandb_name "$(basename "$RUN")")
+echo "$NODES nodes x $NUM_GPUS GPUs, a batch of $(( 4 * NODES * NUM_GPUS )): $RUN"
+if (( NODES == 1 )); then
+    torchrun --standalone --nproc_per_node="$NUM_GPUS" "${train[@]}"
+else
+    # One torchrun per node (mpirun), all of them joined at the first node; NCCL between the nodes
+    module load hpcx
+    MASTER_ADDR=$(head -n 1 "$PBS_NODEFILE")
+    mpirun -np "$NODES" --map-by ppr:1:node -hostfile "$PBS_NODEFILE" -wdir "$REPO" \
+        -x PATH -x LD_LIBRARY_PATH -x OMP_NUM_THREADS -x NUMEXPR_NUM_THREADS -x MKL_NUM_THREADS \
+        bash -c "torchrun --nnodes=$NODES --node_rank=\$OMPI_COMM_WORLD_RANK --master_addr=$MASTER_ADDR --master_port=29500 \
+            --nproc_per_node=$NUM_GPUS ${train[*]@Q}"
+fi
