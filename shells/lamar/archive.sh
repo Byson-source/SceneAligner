@@ -2,8 +2,8 @@
 #PBS -P gai51740
 #PBS -q R9920261300
 #PBS -l select=1
-#PBS -l walltime=24:00:00
-#PBS -v RTYPE=rt_HG
+#PBS -l walltime=48:00:00
+#PBS -v RTYPE=rt_HC
 #PBS -m abe
 #PBS -k oed
 # Zips the data directory into <DATA>.zip, tests the archive, then deletes the directory.

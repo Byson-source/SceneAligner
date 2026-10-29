@@ -20,7 +20,7 @@ export PATH=${HOME}/miniconda3/bin:$PATH
 export OMP_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 MKL_NUM_THREADS=1
 REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v RTYPE=rt_HG,REPO=<dir>
 ZFLOC_REPO="${ZFLOC_REPO:-${HOME}/oss/z-floc}"
-ZFLOC_ENV="${ZFLOC_ENV:-mapanything}"  # conda environment of Z-FLoc (MapAnything, Mask2Former)
+ZFLOC_ENV="${ZFLOC_ENV:-zfloc}"  # conda environment of Z-FLoc (MapAnything, Mask2Former)
 set -euo pipefail
 
 LAMAR_ROOT="${LAMAR_ROOT:-/groups/gai51740/RBT3/umemura/zfloc/lamar}"

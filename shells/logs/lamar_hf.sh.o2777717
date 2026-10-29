@@ -1,0 +1,9 @@
+50 data folders of 886400 samples, 55400 steps
+100 epochs > 50 data folders: epoch e takes epoch_<e % 50> again
+resumed after epoch 50 (step 27700)
+val after epoch 51: loss 7.0797, feat 6.8468, acc 0.4741, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0016, geo 0.0062, topo 0.0093
+val after epoch 52: loss 7.0831, feat 6.8646, acc 0.4942, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0061, topo 0.0081
+val after epoch 53: loss 7.0944, feat 6.8657, acc 0.4879, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0062, topo 0.0090
+val after epoch 54: loss 7.1001, feat 6.8745, acc 0.4968, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0015, geo 0.0062, topo 0.0087
+val after epoch 55: loss 7.1546, feat 6.9300, acc 0.4884, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0016, geo 0.0057, topo 0.0089
+val after epoch 56: loss 7.0305, feat 6.8274, acc 0.5092, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0014, geo 0.0059, topo 0.0074

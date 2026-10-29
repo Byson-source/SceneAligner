@@ -1,0 +1,9 @@
+20 data folders of 354560 samples, 2770 steps
+val after epoch 1: loss 7.9811, feat 7.8283, acc 0.2057, chance 4.1523, w_regr 1.0000, w_struct 0.0000, regr 0.0031
+val after epoch 2: loss 7.9574, feat 7.6273, acc 0.2514, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0027, geo 0.0070, topo 0.0124
+val after epoch 3: loss 7.7765, feat 7.4567, acc 0.2832, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0025, geo 0.0069, topo 0.0124
+val after epoch 4: loss 7.6631, feat 7.3370, acc 0.3050, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0024, geo 0.0070, topo 0.0135
+val after epoch 5: loss 7.5461, feat 7.2420, acc 0.3198, chance 4.1523, w_regr 1.0000, w_struct 1.0000, regr 0.0024, geo 0.0067, topo 0.0117
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33mlamar_lamar_rt_HF_20261025_214308[0m at: [34mhttps://forge.coreweave.com/wandb/umemura-ayumi-t6-tohoku-university/scenealigner-lamar/runs/76fljk19[0m
+[1;34mwandb[0m: Find logs at: [1;35mwandb/run-20261025_214402-76fljk19/logs[0m
