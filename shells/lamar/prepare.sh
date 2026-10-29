@@ -40,9 +40,10 @@ VAL_WINDOWS="${VAL_WINDOWS:-600}"  # val windows (one set)
 CACHE="${CACHE:-$DATA/session_cache}"  # MapAnything on chunks of the sessions, shared by the splits
 NUM_GPUS="${NUM_GPUS:-$(nvidia-smi -L | wc -l)}"
 MEM_WORKERS=$(( $(awk '/MemAvailable/ {print int($2 / 1048576)}' /proc/meminfo) / 8 ))  # up to 8 GB per window
-NUM_WORKERS="${NUM_WORKERS:-$(( $(nproc) < MEM_WORKERS ? $(nproc) : MEM_WORKERS > 1 ? MEM_WORKERS : 1 ))}"  # CPU processes of the samples
+NUM_CPUS=$(env -u OMP_NUM_THREADS -u OMP_THREAD_LIMIT nproc)  # nproc alone gives OMP_NUM_THREADS (1, above)
+NUM_WORKERS="${NUM_WORKERS:-$(( NUM_CPUS < MEM_WORKERS ? NUM_CPUS : MEM_WORKERS > 1 ? MEM_WORKERS : 1 ))}"  # CPU processes of the samples
 export PYTHONUNBUFFERED=1  # the messages and the progress bars reach the terminal (job output) at once
-echo "$NUM_GPUS GPUs, $NUM_WORKERS workers"
+echo "$NUM_GPUS GPUs, $NUM_CPUS CPUs, $(( MEM_WORKERS * 8 )) GB free: $NUM_WORKERS workers"
 common=(--map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" --floorplan "$FLOORPLAN" --plan_size "$PLAN_SIZE" --session_cache "$CACHE")
 # 1. MapAnything on chunks of consecutive frames of the sessions, one process per GPU, one progress bar of all the
 #    chunks (cached chunks are skipped)
