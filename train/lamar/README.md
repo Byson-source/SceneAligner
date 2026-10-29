@@ -276,7 +276,10 @@ of the feature matching loss (all_gather), and the logs are the mean over the GP
 the training), drawn and augmented as the train windows (indoor frames inside the floorplan, as UnLoc) but of consecutive
 frames (`--max_spread 1`), in `$DATA/test/epoch_000` (`SPLITS`, default `train test`; only these windows:
 `qsub -v RTYPE=rt_HF,SPLITS=test shells/lamar/prepare_hf.sh`; the UnLoc val session: `SPLITS="train val"` and
-`VAL_DATA=$DATA/val`). `train.py` takes the windows of
+`VAL_DATA=$DATA/val`). `bash shells/lamar/prepare_train_hf.sh` (on the login node) submits MapAnything (one job,
+`STAGE=recon`), the windows in `NUM_PARTS` (4) jobs of one node (`STAGE=samples`, the job `PART` makes the epochs
+`PART`, `PART + NUM_PARTS`, ...: the same data as one job) and the training on `TRAIN_NODES` (4) nodes, each after
+the previous jobs succeeded. `train.py` takes the windows of
 `<data>/epoch_<e>` at epoch e (in turn if there are fewer sets than epochs). When they exist, `train.sh` passes them to
 `train.py --val_data`, which computes the losses, `acc` and `chance` on them after every epoch (the same
 augmentations at every epoch, seeded by `--seed`) and logs them to wandb (`val/...`) and `<run>/val_log.csv`.

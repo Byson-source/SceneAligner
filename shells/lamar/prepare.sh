@@ -46,7 +46,12 @@ echo "$NUM_GPUS GPUs, $NUM_WORKERS workers"
 common=(--map_dir "$MAP_DIR" --raw_dir "$LAMAR_ROOT" --floorplan "$FLOORPLAN" --plan_size "$PLAN_SIZE" --session_cache "$CACHE")
 # 1. MapAnything on chunks of consecutive frames of the sessions, one process per GPU, one progress bar of all the
 #    chunks (cached chunks are skipped)
-python train/lamar/prepare_lamar.py --stage recon "${common[@]}" --sessions $SPLITS --workers "$NUM_GPUS"
+STAGE="${STAGE:-all}"  # all, recon or samples (prepare_train_hf.sh: one recon job, then NUM_PARTS samples jobs)
+PART="${PART:-0}" NUM_PARTS="${NUM_PARTS:-1}"  # samples: this job makes the epochs PART, PART + NUM_PARTS, ...
+if [[ $STAGE != samples ]]; then
+    python train/lamar/prepare_lamar.py --stage recon "${common[@]}" --sessions $SPLITS --workers "$NUM_GPUS"
+fi
+if [[ $STAGE == recon ]]; then exit 0; fi
 # 2. The windows of every epoch from the cached points (CPU processes, one progress bar of all the windows). The
 #    finished epochs are skipped on a rerun:
 #    delete $DATA/epoch_* and $DATA/<split>/epoch_* after changing EPOCHS, WINDOWS or VAL_WINDOWS
@@ -56,5 +61,6 @@ for split in $SPLITS; do
     windows=$([[ $split == train ]] && echo "$WINDOWS" || echo "$VAL_WINDOWS")
     spread=$([[ $split == test ]] && echo 1 || echo 8)  # test: consecutive frames (interval 1); others: n of n to 8 n frames
     python train/lamar/prepare_lamar.py --stage samples "${common[@]}" --sessions "$split" --workers "$NUM_WORKERS" \
-        --output "$output" --epochs "$epochs" --windows_per_epoch "$windows" --max_spread "$spread" --plan_source "$PLAN_SOURCE"
+        --output "$output" --epochs "$epochs" --windows_per_epoch "$windows" --max_spread "$spread" --plan_source "$PLAN_SOURCE" \
+        --part "$PART" --num_parts "$NUM_PARTS"
 done

@@ -431,7 +431,8 @@ def sample_windows(sessions: dict, args, plan_img, plan_params: dict) -> None:
     different combination of frames (over all epochs), assembled from the cached chunks: one density map of the reconstruction
     (mapanything_sample) and one of the LiDAR points (lidar_samples). Epoch e goes to <output>/epoch_<e>; the windows
     are shared by --workers processes (one progress bar), and the CSV files of an epoch are written once all its
-    windows are done (meta/windows.csv last: the epoch is skipped on a rerun).
+    windows are done (meta/windows.csv last: the epoch is skipped on a rerun). With --num_parts N, the job --part k
+    makes the epochs k, k + N, ... of the same windows (N jobs at once, on different nodes).
     Args:
         sessions (dict): {name: Session of the kept frames}
         args: of main
@@ -445,20 +446,21 @@ def sample_windows(sessions: dict, args, plan_img, plan_params: dict) -> None:
     jobs = [(epoch, parts) for epoch in range(args.epochs)
             for parts in sample_epoch_windows(timestamps, positions, args.windows_per_epoch, rng, seen, tuple(args.num_frames),
                                               args.max_spread, args.mix_prob, args.mix_radius)]
-    done = {e for e in range(args.epochs) if os.path.exists(os.path.join(epoch_dir(args.output, e), "meta", "windows.csv"))}
-    todo = [i for i, job in enumerate(jobs) if job[0] not in done]
-    for epoch in set(range(args.epochs)) - done:
+    mine = set(range(args.part, args.epochs, args.num_parts))  # the epochs of this job (--part of --num_parts)
+    done = {e for e in mine if os.path.exists(os.path.join(epoch_dir(args.output, e), "meta", "windows.csv"))}
+    todo = [i for i, job in enumerate(jobs) if job[0] in mine - done]
+    for epoch in mine - done:
         folder = epoch_dir(args.output, epoch)
         for sub in ("floorplan", "meta", *SOURCES):
             os.makedirs(os.path.join(folder, sub), exist_ok=True)
         plan_img.save(os.path.join(folder, PLAN_PATH))
         with open(os.path.join(folder, "floorplan", "hge_params.json"), "w") as f:
             json.dump({k: (v.tolist() if isinstance(v, np.ndarray) else v) for k, v in plan_params.items() if k != "wall_dist_px"}, f, indent=2)
-    print(f"{len(todo)} of {len(jobs)} windows to do ({len(done)} epochs done), {args.workers} workers", flush=True)
+    print(f"{len(todo)} of {len(jobs)} windows to do (epochs {sorted(mine)}, {len(done)} done), {args.workers} workers", flush=True)
     if not todo:
         return
 
-    left = {e: sum(jobs[i][0] == e for i in todo) for e in set(range(args.epochs)) - done}
+    left = {e: sum(jobs[i][0] == e for i in todo) for e in mine - done}
     rows = {e: {} for e in left}  # epoch -> index -> rows
     WORKER.update(args=args, sessions=sessions, plan_params=plan_params, jobs=jobs, caches={})
     with multiprocessing.get_context("fork").Pool(args.workers) as pool:
@@ -513,6 +515,8 @@ def main():
                         help="correspondences: points within this distance of a wall [m] (< 0: all points inside the floorplan)")
     parser.add_argument("--mapanything_model", default="facebook/map-anything")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--num_parts", type=int, default=1, help="samples: jobs sharing the epochs (epoch e: part e %% N)")
+    parser.add_argument("--part", type=int, default=0, help="samples: this job, in [0, num_parts)")
     args = parser.parse_args()
     if args.stage is None:
         parser.error("--stage recon or --stage samples")
