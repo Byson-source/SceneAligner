@@ -10,7 +10,7 @@ removed from this fork) where correspondences come from ground-truth geometry in
 
 | | C3 (`prepare_c3.py`) | Structured3D (`prepare_s3d.py`) | LaMAR HGE (`prepare_lamar.py`) |
 |---|---|---|---|
-| reconstruction | pi3 / VGGT, 50 to 150 photos, or one | pi3, one view | MapAnything with ground-truth intrinsics and relative poses on chunks of up to 500 consecutive frames of a session (cached); per epoch, 8864 random windows assembled from the cached points: 5 to 500 frames drawn among n to 8 n consecutive frames, in half of them a quarter to a half from other sessions within 2 m, a random 25 to 100 % of the pixels of every frame, every window a different combination of frames |
+| reconstruction | pi3 / VGGT, 50 to 150 photos, or one | pi3, one view | MapAnything with ground-truth intrinsics and relative poses on chunks of up to 500 consecutive frames of a session (cached); per epoch, 8864 random windows assembled from the cached points: 5 to 300 frames drawn among n to 8 n consecutive frames, in half of them a quarter to a half from other sessions within 2 m, a random 25 to 100 % of the pixels of every frame, every window a different combination of frames |
 | gravity | GeoCalib | GeoCalib | ground-truth pose (z-up world) |
 | reconstruction samples | conf 30/45/60/75/90 x x/z 0/2.5/5 x gamma 0.25/0.5/0.75/1 | conf 45, x/z 2.5, gamma 0.5 | one of those of C3 per window, at random |
 | ground-truth geometry samples | - | density map of the ground-truth depth | density map of the LiDAR depth maps |
@@ -96,8 +96,8 @@ Delete the cache after changing `--chunk_size` (`lidar_cam.npy` of an older vers
 `--stage samples` draws, for each of `--epochs` epochs, `--windows_per_epoch 8864` random windows
 (`lamar.sample_epoch_windows`; with a LiDAR sample each, 17728 samples, 554 steps of 32: half the 1108 of an epoch of the 600
 windows x 60 density maps before):
-- a session drawn proportionally to its kept frames, a run of kept frames drawn proportionally to its length, n = 50
-  to 500 frames (`--num_frames`, at most the run), drawn at random in a span of n to 8 n consecutive kept frames
+- a session drawn proportionally to its kept frames, a run of kept frames drawn proportionally to its length, n = 5
+  to 300 frames (`--num_frames`, at most the run), drawn at random in a span of n to 8 n consecutive kept frames
   (`--max_spread`; consecutive frames are about 0.5 m apart) at a random start (`lamar.sample_window`);
 - in half of the windows (`--mix_prob 0.5`), a quarter to a half of the frames (all but the last) replaced with frames
   of one or two other sessions of the split whose cameras are within 2 m (`--mix_radius`) of a camera of the window
