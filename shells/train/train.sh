@@ -23,6 +23,7 @@ export OMP_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 MKL_NUM_THREADS=1
 REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v RTYPE=rt_HG,REPO=<dir>
 cd "$REPO"
 set -euo pipefail
+export PYTHONUNBUFFERED=1  # the messages reach the job output (-k oed: written while the job runs) at once
 
 DATA="${DATA:-/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar}"
 RTYPE="${RTYPE:-rt_HG}"
@@ -59,7 +60,7 @@ else
     module load hpcx
     MASTER_ADDR=$(head -n 1 "$PBS_NODEFILE")
     mpirun -np "$NODES" --map-by ppr:1:node -hostfile "$PBS_NODEFILE" -wdir "$REPO" \
-        -x PATH -x LD_LIBRARY_PATH -x OMP_NUM_THREADS -x NUMEXPR_NUM_THREADS -x MKL_NUM_THREADS \
+        -x PATH -x LD_LIBRARY_PATH -x PYTHONUNBUFFERED -x OMP_NUM_THREADS -x NUMEXPR_NUM_THREADS -x MKL_NUM_THREADS \
         bash -c "torchrun --nnodes=$NODES --node_rank=\$OMPI_COMM_WORLD_RANK --master_addr=$MASTER_ADDR --master_port=29500 \
             --nproc_per_node=$NUM_GPUS ${train[*]@Q}"
 fi

@@ -18,6 +18,7 @@ export OMP_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 MKL_NUM_THREADS=1
 REPO="${REPO:-${HOME}/oss/SceneAligner}"  # repository (PBS runs a copy of this script); override with qsub -v RTYPE=rt_HG,REPO=<dir>
 cd "$REPO"
 set -euo pipefail
+export PYTHONUNBUFFERED=1  # the messages reach the job output (-k oed: written while the job runs) at once
 
 LAMAR_ROOT="${LAMAR_ROOT:-/groups/gai51740/RBT3/umemura/zfloc/lamar}"
 MAP_DIR="${MAP_DIR:-$LAMAR_ROOT/HGE/sessions/map}"
