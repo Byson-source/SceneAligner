@@ -13,6 +13,7 @@
 #   bash shells/lamar/prepare_train_hf.sh
 #   NUM_PARTS=4 TRAIN_NODES=4 TRAIN_EPOCHS=500 TRAIN_JOBS=3 bash shells/lamar/prepare_train_hf.sh
 #   PREPARE=0 RESUME=outputs/<run> TRAIN_EPOCHS=500 TRAIN_JOBS=3 bash shells/lamar/prepare_train_hf.sh  # an existing run
+#   (TRAIN_LR=3e-4: the learning rate of the training jobs, also of a resumed run)
 # Delete $DATA/epoch_* and $DATA/<split>/epoch_* first when the windows change (the finished epochs are skipped).
 set -euo pipefail
 REPO="${REPO:-${HOME}/oss/SceneAligner}"
@@ -22,7 +23,7 @@ NUM_PARTS="${NUM_PARTS:-4}"
 TRAIN_NODES="${TRAIN_NODES:-4}"
 TRAIN_JOBS="${TRAIN_JOBS:-1}"
 RUN="${RESUME:-outputs/lamar_$(basename "${DATA:-lamar}")_rt_HFx${TRAIN_NODES}_$(date +%Y%m%d_%H%M%S)}"  # named here: the later jobs resume it
-train_vars="RTYPE=rt_HF,RUN=$RUN${TRAIN_EPOCHS:+,EPOCHS=$TRAIN_EPOCHS}${DATA:+,DATA=$DATA}"
+train_vars="RTYPE=rt_HF,RUN=$RUN${TRAIN_EPOCHS:+,EPOCHS=$TRAIN_EPOCHS}${TRAIN_LR:+,LR=$TRAIN_LR}${DATA:+,DATA=$DATA}"
 
 depend=()
 if (( PREPARE )); then
