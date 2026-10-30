@@ -4,7 +4,6 @@
 #PBS -l select=1
 #PBS -l walltime=08:00:00
 #PBS -v RTYPE=rt_HG
-#PBS -m abe
 #PBS -k oed
 # Downloads and extracts the raw LaMAR HGE phone sessions needed by train/lamar/split.yaml.
 #

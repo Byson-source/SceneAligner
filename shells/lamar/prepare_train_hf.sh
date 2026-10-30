@@ -4,7 +4,6 @@
 #PBS -l select=1
 #PBS -l walltime=00:10:00
 #PBS -v RTYPE=rt_HF
-#PBS -m abe
 #PBS -k oed
 # Submits the whole pipeline on rt_HF, each job after the previous ones succeeded (run on the login node with bash,
 # not qsub): MapAnything (1 node, prepare_hf.sh STAGE=recon) -> the windows in NUM_PARTS jobs of 1 node sharing the
