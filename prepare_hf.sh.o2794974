@@ -1,0 +1,56 @@
+python: /home/aag16494oe/miniconda3/envs/scenealigner/bin/python 3.11.17
+Warning, cannot find cuda-compiled version of RoPE2D, using a slow pytorch version instead
+floorplan: (3278, 2334) px, 0.0546 m/px, resized to (1024, 1024)
+affine fit residual: [4.6 4.4 5.2 5.4] px = [0.25 0.24 0.28 0.3 ] m
+map sensors.txt: 7701 camera-like sensors
+train ios_2022-01-12_15.15.53_000: 579 frames (579 images found), indoor and in bounds: 579, runs without gaps: [579], depth for 579/579 frames, plane normal 2.0 deg, camera up 8.8 deg from +z
+    image K[0] = [1592.5 1592.5  716.9  939.2], fx in [1567.6, 1630.4]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+train ios_2022-01-18_17.05.03_000: 389 frames (389 images found), indoor and in bounds: 154, runs without gaps: [154], depth for 389/389 frames, plane normal 2.9 deg, camera up 1.9 deg from +z
+    image K[0] = [1597.9 1597.9  717.   938.9], fx in [1576.6, 1624.1]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+train ios_2022-01-20_16.52.33_001: 476 frames (476 images found), indoor and in bounds: 350, runs without gaps: [350], depth for 476/476 frames, plane normal 1.6 deg, camera up 1.8 deg from +z
+    image K[0] = [1589.3 1589.3  716.7  938.9], fx in [1564.0, 1622.3]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+train ios_2022-01-25_14.34.24_002: 80 frames (80 images found), indoor and in bounds: 80, runs without gaps: [80], depth for 80/80 frames, plane normal 3.1 deg, camera up 6.8 deg from +z
+    image K[0] = [1595.6 1595.6  716.9  939.2], fx in [1566.7, 1615.5]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+train ios_2022-01-25_14.57.49_000: 484 frames (484 images found), indoor and in bounds: 484, runs without gaps: [484], depth for 484/484 frames, plane normal 2.5 deg, camera up 4.8 deg from +z
+    image K[0] = [1592.5 1592.5  716.9  938.9], fx in [1563.5, 1624.6]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+train ios_2022-01-25_15.13.54_000: 222 frames (222 images found), indoor and in bounds: 222, runs without gaps: [222], depth for 222/222 frames, plane normal 1.1 deg, camera up 5.6 deg from +z
+    image K[0] = [1596.5 1596.5  716.9  938.9], fx in [1567.6, 1649.0]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+train ios_2022-06-13_10.45.07_000: 591 frames (591 images found), indoor and in bounds: 490, runs without gaps: [490], depth for 591/591 frames, plane normal 0.4 deg, camera up 1.0 deg from +z
+    image K[0] = [1600.1 1600.1  723.1  954.3], fx in [1563.5, 1634.9]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+train ios_2022-06-13_15.59.36_000: 628 frames (628 images found), indoor and in bounds: 341, runs without gaps: [341], depth for 628/628 frames, plane normal 0.7 deg, camera up 2.5 deg from +z
+    image K[0] = [1601.5 1601.5  723.   954.3], fx in [1570.8, 1645.8]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+train ios_2022-06-14_17.12.28_000: 442 frames (442 images found), indoor and in bounds: 263, runs without gaps: [185, 78], depth for 442/442 frames, plane normal 0.3 deg, camera up 1.5 deg from +z
+    image K[0] = [1607.4 1607.4  717.   939. ], fx in [1565.8, 1631.8]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+train ios_2022-06-30_15.55.53_000: 538 frames (538 images found), indoor and in bounds: 345, runs without gaps: [204, 141], depth for 538/538 frames, plane normal 1.2 deg, camera up 3.6 deg from +z
+    image K[0] = [1591.1 1591.1  716.8  939.1], fx in [1564.4, 1630.0]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+train ios_2022-07-01_15.18.09_000: 307 frames (307 images found), indoor and in bounds: 307, runs without gaps: [307], depth for 307/307 frames, plane normal 0.2 deg, camera up 3.8 deg from +z
+    image K[0] = [1605.6 1605.6  723.   954.4], fx in [1564.4, 1629.1]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+train ios_2022-07-01_15.58.10_000: 205 frames (205 images found), indoor and in bounds: 205, runs without gaps: [205], depth for 205/205 frames, plane normal 0.3 deg, camera up 12.2 deg from +z
+    image K[0] = [1600.1 1600.1  723.   954.3], fx in [1566.7, 1625.0]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+val ios_2022-01-25_15.13.54_002: 174 frames (174 images found), indoor and in bounds: 77, runs without gaps: [77], depth for 174/174 frames, plane normal 3.8 deg, camera up 3.5 deg from +z
+    image K[0] = [1596.5 1596.5  716.9  939. ], fx in [1568.1, 1622.7]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+test ios_2022-07-01_15.45.08_000: 519 frames (519 images found), kept by the index shift: 410, depth for 519/519 frames, plane normal 0.1 deg, camera up 1.2 deg from +z
+    image K[0] = [1585.7 1585.7  723.   954.3], fx in [1563.5, 1625.5]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+test ios_2022-01-18_17.10.39_000: 695 frames (695 images found), kept by the index shift: 516, depth for 695/695 frames, plane normal 2.0 deg, camera up 1.3 deg from +z
+    image K[0] = [1591.1 1591.1  716.9  938.9], fx in [1567.6, 1609.2]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+test ios_2022-07-03_16.00.37_000: 615 frames (615 images found), kept by the index shift: 397, depth for 615/615 frames, plane normal 2.4 deg, camera up 1.2 deg from +z
+    image K[0] = [1591.1 1591.1  716.7  939.1], fx in [1564.9, 1629.5]
+    depth 192x256, K_depth / K of frame 0 = [0.1333 0.1333 0.1333 0.1333] (fx, fy, cx, cy)
+8 GPUs, 1 workers
+Warning, cannot find cuda-compiled version of RoPE2D, using a slow pytorch version instead
+44320 of 177280 windows to do (epochs [1, 5, 9, 13, 17], 0 done), 1 workers

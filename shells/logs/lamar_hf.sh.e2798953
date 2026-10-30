@@ -1,0 +1,33 @@
+wandb: [wandb.login()] Loaded credentials for https://api.forge.coreweave.com from /home/aag16494oe/.netrc.
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+[rank1]:[W1030 10:42:10.469357880 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 1]  using GPU 1 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.
+[rank7]:[W1030 10:42:10.469387153 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 7]  using GPU 7 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.
+[rank6]:[W1030 10:42:10.469417788 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 6]  using GPU 6 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.
+[rank2]:[W1030 10:42:10.469413042 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 2]  using GPU 2 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.
+[rank3]:[W1030 10:42:10.469426699 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 3]  using GPU 3 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.
+[rank4]:[W1030 10:42:10.469469074 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 4]  using GPU 4 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.
+[rank5]:[W1030 10:42:10.469527124 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 5]  using GPU 5 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.
+wandb: Currently logged in as: umemura-ayumi-t6 (umemura-ayumi-t6-tohoku-university) to https://api.forge.coreweave.com. Use `wandb login --relogin` to force relogin
+wandb: setting up run p97jjyvj
+wandb: Tracking run with wandb version 0.31.0
+wandb: Run data is saved locally in /home/aag16494oe/oss/SceneAligner/wandb/run-20261030_104212-p97jjyvj
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Resuming run scratch_4hf
+wandb: ⭐️ View project at https://forge.coreweave.com/wandb/umemura-ayumi-t6-tohoku-university/scenealigner-lamar
+wandb: 🚀 View run at https://forge.coreweave.com/wandb/umemura-ayumi-t6-tohoku-university/scenealigner-lamar/runs/p97jjyvj
+/home/aag16494oe/miniconda3/envs/scenealigner/lib/python3.11/site-packages/torch/distributed/distributed_c10d.py:4631: UserWarning: No device id is provided via `init_process_group` or `barrier `. Using the current device set by the user. 
+  warnings.warn(  # warn only once
+[rank0]:[W1030 10:42:15.518460178 ProcessGroupNCCL.cpp:4718] [PG ID 0 PG GUID 0 Rank 0]  using GPU 0 as device used by this process is currently unknown. This can potentially cause a hang if this rank to GPU mapping is incorrect. You can pecify device_id in init_process_group() to force use of a particular device.

@@ -1,0 +1,41 @@
+[2026-10-29 19:39:14] checkpoint outputs/scratch, solver zfloc, scale_tol 0.35, lengths 100, seeds 42
+[2026-10-29 19:39:14] data /groups/gai51740/RBT3/umemura/zfloc/dataset/lamar/zfloc_hge, point clouds /groups/gai51740/RBT3/umemura/zfloc/dataset/lamar/zfloc_pcd, results /home/aag16494oe/oss/SceneAligner/outputs/zfloc_eval_scratch_zfloc
+[2026-10-29 19:39:17] 1/4 create_lamar_hge.py: skipped (/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar/zfloc_hge/split.yaml exists)
+[2026-10-29 19:39:17] 2/4 generate_pcd.py L=100: 12 point clouds already, log /groups/gai51740/RBT3/umemura/zfloc/dataset/lamar/zfloc_pcd/hge_100.log
+======= USING DEVICE : cuda =======
+Loading pretrained dinov2_vitl14 from torch hub
+Using cache found in /home/aag16494oe/.cache/torch/hub/facebookresearch_dinov2_main
+load poses ...
+loading poses:   0%|          | 0/3 [00:00<?, ?it/s]loading poses: 100%|██████████| 3/3 [00:00<00:00, 358.10it/s]
+generating pcds:   0%|          | 0/12 [00:00<?, ?it/s]generating pcds: 100%|██████████| 12/12 [00:00<00:00, 185.27it/s]
+[2026-10-29 19:40:17] 2/4 generate_pcd.py L=100: done, 12 point clouds
+[2026-10-29 19:40:17] 3/4 extract_primitives.py L=100, log /groups/gai51740/RBT3/umemura/zfloc/dataset/lamar/zfloc_pcd/hge_100_primitives.log
+ios_2022-01-18_17.10.39_000:   0%|          | 0/5 [00:00<?, ?it/s]ios_2022-01-18_17.10.39_000: 100%|██████████| 5/5 [00:00<00:00, 1533.79it/s]
+ios_2022-07-01_15.45.08_000:   0%|          | 0/4 [00:00<?, ?it/s]ios_2022-07-01_15.45.08_000: 100%|██████████| 4/4 [00:00<00:00, 1688.70it/s]
+ios_2022-07-03_16.00.37_000:   0%|          | 0/3 [00:00<?, ?it/s]ios_2022-07-03_16.00.37_000: 100%|██████████| 3/3 [00:00<00:00, 1441.01it/s]
+/groups/gai51740/RBT3/umemura/zfloc/dataset/lamar/zfloc_pcd/hge_100.npz: length 100, 12 windows, 72 files
+[2026-10-29 19:40:26] 3/4 extract_primitives.py L=100: done, 12 BEVs
+[2026-10-29 19:40:35] 4/4 evaluate_zfloc.py, log /home/aag16494oe/oss/SceneAligner/outputs/zfloc_eval_scratch_zfloc/test_results.log
+Warning, cannot find cuda-compiled version of RoPE2D, using a slow pytorch version instead
+model: outputs/scratch, solver: nC2 hypotheses + Z-FLoc scoring and LM
+ios_2022-07-01_15.45.08_000: 410 frames
+ios_2022-07-03_16.00.37_000: 397 frames
+ios_2022-01-18_17.10.39_000: 516 frames
+L=100: 12 windows
+12 windows x 1 seeds (shard 0/1)
+[1/12] L=100 ios_2022-07-01_15.45.08_000 00099-0: SR 1/1, median 0.69 m, failed 0, 40 correspondences | L=100 SR so far 100.0 % | 12.4 s (elapsed 0:00:12, ETA 0:02:16)
+[2/12] L=100 ios_2022-07-01_15.45.08_000 00199-0: SR 0/1, median 35.81 m, failed 0, 34 correspondences | L=100 SR so far 50.0 % | 3.3 s (elapsed 0:00:15, ETA 0:01:18)
+[3/12] L=100 ios_2022-07-01_15.45.08_000 00299-0: SR 1/1, median 0.60 m, failed 0, 31 correspondences | L=100 SR so far 66.7 % | 3.1 s (elapsed 0:00:18, ETA 0:00:56)
+[4/12] L=100 ios_2022-07-01_15.45.08_000 00399-0: SR 1/1, median 0.39 m, failed 0, 23 correspondences | L=100 SR so far 75.0 % | 3.2 s (elapsed 0:00:21, ETA 0:00:43)
+[5/12] L=100 ios_2022-07-03_16.00.37_000 00099-0: SR 1/1, median 0.14 m, failed 0, 36 correspondences | L=100 SR so far 80.0 % | 3.4 s (elapsed 0:00:25, ETA 0:00:35)
+[6/12] L=100 ios_2022-07-03_16.00.37_000 00199-0: SR 1/1, median 0.86 m, failed 0, 51 correspondences | L=100 SR so far 83.3 % | 3.1 s (elapsed 0:00:28, ETA 0:00:28)
+[7/12] L=100 ios_2022-07-03_16.00.37_000 00299-0: SR 1/1, median 0.46 m, failed 0, 40 correspondences | L=100 SR so far 85.7 % | 3.2 s (elapsed 0:00:31, ETA 0:00:22)
+[8/12] L=100 ios_2022-01-18_17.10.39_000 00099-0: SR 0/1, median 80.84 m, failed 0, 17 correspondences | L=100 SR so far 75.0 % | 3.2 s (elapsed 0:00:34, ETA 0:00:17)
+[9/12] L=100 ios_2022-01-18_17.10.39_000 00199-0: SR 1/1, median 0.45 m, failed 0, 26 correspondences | L=100 SR so far 77.8 % | 3.2 s (elapsed 0:00:38, ETA 0:00:12)
+[10/12] L=100 ios_2022-01-18_17.10.39_000 00299-0: SR 1/1, median 0.09 m, failed 0, 35 correspondences | L=100 SR so far 80.0 % | 3.0 s (elapsed 0:00:41, ETA 0:00:08)
+[11/12] L=100 ios_2022-01-18_17.10.39_000 00399-0: SR 0/1, median 1.01 m, failed 0, 43 correspondences | L=100 SR so far 72.7 % | 3.3 s (elapsed 0:00:44, ETA 0:00:04)
+[12/12] L=100 ios_2022-01-18_17.10.39_000 00499-0: SR 0/1, median 76.85 m, failed 0, 25 correspondences | L=100 SR so far 66.7 % | 3.6 s (elapsed 0:00:48, ETA 0:00:00)
+L=100 finished: SR@1m 66.7 % (12 windows, mean over the seeds)
+length | seeds | SR@1m (%) | windows | median error (m)
+   100 |     1 |      66.7 |      12 |             0.65
+[2026-10-29 19:42:09] done: /home/aag16494oe/oss/SceneAligner/outputs/zfloc_eval_scratch_zfloc/test_results.json, density maps and alignments (SOLVER=zfloc: overlays on hge.png) in /home/aag16494oe/oss/SceneAligner/outputs/zfloc_eval_scratch_zfloc/test_results_vis

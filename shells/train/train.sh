@@ -34,7 +34,7 @@ if (( NODES > 1 )); then nodes_tag="x$NODES"; fi
 RUN="${RUN:-${RESUME:-outputs/lamar_$(basename "$DATA")_${RTYPE}${nodes_tag}_$(date +%Y%m%d_%H%M%S)}}"  # a new run per job
 resume_args=()
 if [[ -n "${RESUME:-}" ]]; then resume_args=(--resume); fi  # qsub -v RTYPE=rt_HG,RESUME=<run>: continues that run
-EPOCHS="${EPOCHS:-20}"
+EPOCHS="${EPOCHS:-100}"
 WANDB_PROJECT="${WANDB_PROJECT:-scenealigner-lamar}"
 NEGATIVES="${NEGATIVES:-batch}"  # the other windows of the batch are negatives (all windows share the floorplan)
 PLAN_GRID="${PLAN_GRID:-8}"      # one correspondence per 8 px (1.4 m) of the 1024 px floorplan

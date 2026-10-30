@@ -1,0 +1,7 @@
+1 nodes x 8 GPUs, a batch of 32: /home/aag16494oe/oss/SceneAligner/outputs/scratch_4hf
+20 data folders of 354552 samples, 55400 steps
+100 epochs > 20 data folders: epoch e takes epoch_<e % 20> again
+resumed after epoch 155 (step 21545)
+[1;34mwandb[0m: 
+[1;34mwandb[0m: 🚀 View run [33mscratch_4hf[0m at: [34mhttps://forge.coreweave.com/wandb/umemura-ayumi-t6-tohoku-university/scenealigner-lamar/runs/p97jjyvj[0m
+[1;34mwandb[0m: Find logs at: [1;35mwandb/run-20261030_104212-p97jjyvj/logs[0m
