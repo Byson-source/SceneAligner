@@ -4,7 +4,6 @@
 #PBS -l select=1
 #PBS -l walltime=24:00:00
 #PBS -v RTYPE=rt_HG
-#PBS -m abe
 #PBS -k oed
 # Training of the LoRA layers on the LaMAR HGE data of prepare_lamar.py, logged to wandb. Epoch e takes the windows
 # of $DATA/epoch_<e> (other windows at every epoch; in turn if prepare.sh made fewer sets than EPOCHS).

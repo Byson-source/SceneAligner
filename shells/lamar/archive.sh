@@ -4,7 +4,6 @@
 #PBS -l select=1
 #PBS -l walltime=48:00:00
 #PBS -v RTYPE=rt_HC
-#PBS -m abe
 #PBS -k oed
 # Zips the data directory into <DATA>.zip, tests the archive, then deletes the directory.
 # qsub shells/lamar/archive.sh  (DATA: default /groups/gai51740/RBT3/umemura/zfloc/dataset/lamar)

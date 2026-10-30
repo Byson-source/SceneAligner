@@ -4,7 +4,6 @@
 #PBS -l select=1
 #PBS -l walltime=24:00:00
 #PBS -v RTYPE=rt_HG
-#PBS -m abe
 #PBS -k oed
 # SceneAligner on the Z-FLoc LaMAR HGE inputs (rt_HG). Submit from any directory: qsub -v RTYPE=rt_HG,CHECKPOINT=<run> shells/lamar/zfloc_eval_hg.sh
 # Directly (e.g. on an interactive GPU node): LENGTHS=100 SEEDS=42 bash shells/lamar/zfloc_eval_hg.sh (space-separated values, no commas)

@@ -5,7 +5,6 @@
 #PBS -l select=1
 #PBS -l walltime=04:00:00
 #PBS -v RTYPE=rt_HG
-#PBS -m abe
 
 
 

@@ -326,9 +326,14 @@ def main():
     if state:
         set_peft_model_state_dict(model, load_peft_weights(args.output))
         optimizer.load_state_dict(state["optimizer"])
+        for group in optimizer.param_groups:  # --lr of this job (load_state_dict restores that of the saved run)
+            group["lr"] = args.lr
         first_epoch, step = state["epoch"] + 1, state["step"]
         if rank == 0:
-            print(f"resumed after epoch {first_epoch} (step {step})")
+            print(f"resumed after epoch {first_epoch} (step {step}), lr {args.lr}")
+            if first_epoch >= args.epochs:
+                print(f"WARNING: the run has {first_epoch} epochs, not fewer than --epochs {args.epochs}: nothing to train "
+                      f"(pass a larger EPOCHS / TRAIN_EPOCHS)")
     extractor = FeatureExtractor(model)
     if num_gpus > 1:
         extractor = DistributedDataParallel(extractor, device_ids=[torch.cuda.current_device()])

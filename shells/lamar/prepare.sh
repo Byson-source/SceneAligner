@@ -4,7 +4,6 @@
 #PBS -l select=1
 #PBS -l walltime=24:00:00
 #PBS -v RTYPE=rt_HG
-#PBS -m abe
 #PBS -k oed
 # LaMAR HGE training data: data check, MapAnything on the frames of the train and test sessions (cached), then the
 # density maps of random windows assembled from the cached points: other windows at every epoch of train.py

@@ -4,7 +4,6 @@
 #PBS -l select=1
 #PBS -l walltime=24:00:00
 #PBS -v RTYPE=rt_HG
-#PBS -m abe
 #PBS -k oed
 # SceneAligner on the inputs of the Z-FLoc LaMAR HGE experiment, from the point clouds to the poses:
 #   1. Z-FLoc tools/lamar_setup/create_lamar_hge.py: kept frames, poses_world.npy, poses_map.npy ($ZFLOC_DATA)

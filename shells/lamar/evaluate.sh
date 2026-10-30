@@ -4,7 +4,6 @@
 #PBS -l select=1
 #PBS -l walltime=12:00:00
 #PBS -v RTYPE=rt_HG
-#PBS -m abe
 #PBS -k oed
 # Evaluation on LaMAR HGE (Z-FLoc protocol): the val session (L = 20, seed 42), then the test sessions (all L, seeds 42-46).
 # NUM_GPUS: processes (default: the GPUs of the node).
