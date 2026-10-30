@@ -15,6 +15,7 @@
 #   (TRAIN_LR=3e-4: the learning rate of the training jobs, also of a resumed run)
 # Delete $DATA/epoch_* and $DATA/<split>/epoch_* first when the windows change (the finished epochs are skipped).
 set -euo pipefail
+if [[ -n ${PBS_JOBID:-} ]]; then echo "run on the login node with bash (it submits the jobs), not with qsub"; exit 1; fi
 REPO="${REPO:-${HOME}/oss/SceneAligner}"
 cd "$REPO"
 PREPARE="${PREPARE:-1}"  # 0: only the training jobs
