@@ -27,6 +27,8 @@ RTYPE="${RTYPE:-rt_HG}"
 CHECKPOINT="${CHECKPOINT:-outputs/scratch}"
 PLAN_SIZE="${PLAN_SIZE:-1024}"
 OUT="${OUT:-outputs/eval_$(basename "$CHECKPOINT")}"
+LENGTHS="${LENGTHS:-15 20 35 50 100}"  # test windows (space-separated; qsub -v takes no spaces: one value, e.g. LENGTHS=100)
+SEEDS="${SEEDS:-42 43 44 45 46}"
 ZFLOC_NPZ_ARG=()
 if [ -n "${ZFLOC_NPZ:-}" ]; then
     ZFLOC_NPZ_ARG=(--zfloc_npz "$ZFLOC_NPZ")
@@ -56,4 +58,4 @@ evaluate() {  # evaluate <output json> <evaluate_lamar.py arguments>
     fi
 }
 evaluate "$OUT/val_results.json" --sessions val --seq_length 20 --seeds 42
-evaluate "$OUT/test_results.json" "${ZFLOC_NPZ_ARG[@]}" --save_vis
+evaluate "$OUT/test_results.json" "${ZFLOC_NPZ_ARG[@]}" --seq_length $LENGTHS --seeds $SEEDS --save_vis
