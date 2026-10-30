@@ -13,7 +13,6 @@
    #PBS -l select=1
    #PBS -l walltime=04:00:00
    #PBS -v RTYPE=rt_HG
-   #PBS -m abe
    #PBS -k oed
    ```
 6. GPU を使う shell（`shells/train/`）は必ず rt_HF 版 `<name>_hf.sh` と rt_HG 版 `<name>_hg.sh` の 2 つを作る。
